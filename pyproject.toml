@@ -1,0 +1,37 @@
+[project]
+name = "medicore"
+version = "0.1.0"
+description = "AI-powered supplier catalog ingestion, ranking, and chat system"
+requires-python = ">=3.12"
+dependencies = [
+    "celery>=5.4.0",
+    "fastapi>=0.115.0",
+    "google-api-python-client>=2.149.0",
+    "google-auth>=2.35.0",
+    "groq>=0.11.0",
+    "httpx>=0.27.0",
+    "pgvector>=0.3.6",
+    "pdfplumber>=0.11.0",
+    "psycopg[binary]>=3.2.0",
+    "pydantic-settings>=2.5.0",
+    "pymupdf>=1.24.10",
+    "python-multipart>=0.0.9",
+    "redis>=5.0.8",
+    "sentence-transformers>=3.1.0",
+    "sqlalchemy>=2.0.35",
+    "supabase>=2.8.0",
+    "uvicorn[standard]>=0.30.6",
+    "psycopg2>=2.9.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

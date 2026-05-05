@@ -1,0 +1,1 @@
+"""MediCORE backend package."""
