@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 from sqlalchemy import URL, create_engine
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from supabase import Client, create_client
 
@@ -37,7 +38,16 @@ def build_database_url() -> URL | str:
     return raw_url
 
 
-engine = create_engine(build_database_url(), pool_pre_ping=True)
+def create_app_engine():
+    try:
+        return create_engine(build_database_url(), pool_pre_ping=True)
+    except (ValueError, SQLAlchemyError):
+        if settings.environment == "production":
+            raise
+        return create_engine("sqlite+pysqlite:///:memory:")
+
+
+engine = create_app_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 

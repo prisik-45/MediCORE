@@ -62,8 +62,10 @@ Ingest supplier emails, extract attached PDF catalogs, normalize item data, rank
 6. Run the worker only when you want email ingestion/background processing:
 
    ```powershell
-   uv run -- python -m celery -A backend.app.tasks worker --loglevel=info
+   uv run -- python -m celery -A backend.app.tasks worker --loglevel=info --pool=solo
    ```
+
+   **Note on Windows:** The `--pool=solo` flag disables multiprocessing and runs a single-process worker. This avoids permission errors from billiard's semaphore locks on Windows. For production on Windows, consider using WSL2 or Docker instead.
 
 7. Run the frontend:
 
