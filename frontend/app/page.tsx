@@ -185,7 +185,9 @@ export default function Home() {
   const [supplierSort, setSupplierSort] = useState<SupplierSort>("latest");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogFilter, setCatalogFilter] = useState<"all" | "best" | "low-stock">("all");
-  const [compareIngredient, setCompareIngredient] = useState("paracetamol");
+  const [compareIngredient, setCompareIngredient] = useState("");
+  const [selectedCompareIngredient, setSelectedCompareIngredient] = useState("");
+  const [compareSearchFocused, setCompareSearchFocused] = useState(false);
   const [compareSort, setCompareSort] = useState<CompareSort>("best-value");
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -311,7 +313,7 @@ export default function Home() {
     const potentialSavings = deals.reduce((total, deal) => total + deal.savingValue, 0);
     const activities = inboxThreads.slice(0, 5).map((thread, index) => ({
       tone: index === 2 ? "warning" : index % 2 === 0 ? "strong" : "soft",
-      text: `${thread.supplier_name} sent catalog - ${thread.item_count} items extracted`,
+      text: `${thread.supplier_name} sent catalogue - ${thread.item_count} items extracted`,
       time: formatRelativeTime(thread.received_at),
     }));
 
@@ -396,8 +398,21 @@ export default function Home() {
       .sort((left, right) => left.localeCompare(right));
   }, [supplierRows]);
 
-  const compareData = useMemo(() => {
+  const compareSuggestions = useMemo(() => {
     const requested = compareIngredient.trim().toLowerCase();
+    const ranked = availableIngredients.filter((ingredient) => {
+      const normalized = ingredient.toLowerCase();
+      return !requested || normalized.startsWith(requested) || normalized.includes(requested);
+    });
+    return ranked.slice(0, 8);
+  }, [availableIngredients, compareIngredient]);
+
+  const compareData = useMemo(() => {
+    const requested = selectedCompareIngredient.trim().toLowerCase();
+    if (!requested) {
+      return { rows: [], topRows: [], otherRows: [], ingredientLabel: "ingredient" };
+    }
+
     const matchedRows = supplierRows.filter((row) => {
       const normalized = (row.normalized_name || "").toLowerCase();
       const ingredient = (row.ingredient_name || "").toLowerCase();
@@ -445,9 +460,9 @@ export default function Home() {
       rows: sorted,
       topRows: sorted.slice(0, 3),
       otherRows: sorted.slice(3),
-      ingredientLabel: sorted[0]?.normalized_name || compareIngredient || "ingredient",
+      ingredientLabel: sorted[0]?.normalized_name || selectedCompareIngredient || "ingredient",
     };
-  }, [compareIngredient, compareSort, supplierRows]);
+  }, [compareSort, selectedCompareIngredient, supplierRows]);
 
   useEffect(() => {
     if (!selectedInboxSupplier && inboxThreads[0]) {
@@ -614,18 +629,7 @@ export default function Home() {
               </li>
             </ul>
           </div>
-          <div className="sidebar-section">
-            <div className="sidebar-section-title">Analysis</div>
-            <ul className="sidebar-nav">
-              <li className="sidebar-nav-item">
-                <button
-                  className={`sidebar-nav-link ${activeTab === "analysis" ? "active" : ""}`}
-                  onClick={() => setActiveTab("analysis")}
-                >
-                  <BarChart3 size={18} />
-                  <span>Analysis</span>
-                </button>
-              </li>
+          <div className="sidebar-section"><ul className="sidebar-nav">
               <li className="sidebar-nav-item">
                 <button
                   className={`sidebar-nav-link ${activeTab === "compare" ? "active" : ""}`}
@@ -650,7 +654,7 @@ export default function Home() {
                   onClick={() => setActiveTab("assistant")}
                 >
                   <Sparkles size={18} />
-                  <span>AI assistant</span>
+                  <span>AI Assistant</span>
                 </button>
               </li>
             </ul>
@@ -703,7 +707,7 @@ export default function Home() {
                   <small>{dashboardData.activities.length} recent supplier updates</small>
                 </article>
                 <article>
-                  <span>New catalogs</span>
+                  <span>New catalogues</span>
                   <strong>{dashboardData.completedCatalogs}</strong>
                   <small>{Math.max(0, dashboardData.emailsReceived - dashboardData.completedCatalogs)} pending review</small>
                 </article>
@@ -775,7 +779,6 @@ export default function Home() {
               <aside className="inbox-list-panel">
                 <div className="inbox-panel-header">
                   <div>
-                    <p className="section-kicker">Supplier inbox</p>
                     <h2>Inbox</h2>
                   </div>
                   <span className="inbox-count">{inboxThreads.length}</span>
@@ -803,10 +806,9 @@ export default function Home() {
                           <strong>{thread.supplier_name}</strong>
                           <span>{formatRelativeTime(thread.received_at)}</span>
                         </div>
-                        <div className="inbox-thread-subject">{thread.latest_item} — {thread.item_count} items</div>
+                        <div className="inbox-thread-subject">{thread.item_count} items</div>
                         <div className="inbox-thread-meta">
                           <span className={`thread-status ${thread.status_tone}`}>{thread.status_label}</span>
-                          <span>{thread.email_domain}</span>
                         </div>
                       </button>
                     ))
@@ -859,7 +861,7 @@ export default function Home() {
                           <tbody>
                             {selectedInboxThread.items.length === 0 ? (
                               <tr>
-                                <td colSpan={5}>No catalog items were extracted for this supplier.</td>
+                                <td colSpan={5}>No catalogue items were extracted for this supplier.</td>
                               </tr>
                             ) : (
                               selectedInboxThread.items.slice(0, 4).map((item, index) => {
@@ -882,12 +884,12 @@ export default function Home() {
 
                     <div className="inbox-actions">
                       <button type="button" onClick={() => setActiveTab("compare")}>Compare suppliers</button>
-                      <button type="button" onClick={() => { setSelectedCatalogSupplier(selectedInboxThread.supplier_name); setActiveTab("catalogs"); }}>View full catalog</button>
+                      <button type="button" onClick={() => { setSelectedCatalogSupplier(selectedInboxThread.supplier_name); setActiveTab("catalogs"); }}>View full catalogue</button>
                       <button type="button" onClick={() => setActiveTab("assistant")}>Ask AI</button>
                     </div>
                   </>
                 ) : (
-                  <div className="inbox-empty-state">Pick a supplier to view the extracted catalog details.</div>
+                  <div className="inbox-empty-state">Pick a supplier to view the extracted catalogue details.</div>
                 )}
               </section>
             </div>
@@ -978,7 +980,7 @@ export default function Home() {
                   <strong>{inboxThreads.length}</strong>
                 </article>
                 <article>
-                  <span>Catalog Items</span>
+                  <span>Catalogue Items</span>
                   <strong>{supplierRows.length}</strong>
                 </article>
               </div>
@@ -987,24 +989,32 @@ export default function Home() {
 
           {activeTab === "compare" && (
             <section className="compare-window">
+              <div className="compare-titlebar">
+                <h2>Compare</h2>
+              </div>
               <div className="compare-toolbar">
                 <div className="compare-search-group">
                   <span>Comparing:</span>
-                  <label className="compare-search">
-                    <Search size={16} />
-                    <input
-                      value={compareIngredient}
-                      list="ingredient-options"
-                      onChange={(event) => setCompareIngredient(event.target.value)}
-                      placeholder="Enter ingredient"
-                    />
-                  </label>
-                  <datalist id="ingredient-options">
-                    {availableIngredients.map((ingredient) => (
-                      <option key={ingredient} value={ingredient} />
-                    ))}
-                  </datalist>
-                  <small>{compareData.rows[0]?.pack_size || `${compareData.rows[0]?.unit ?? "unit"} based`} - Min qty {formatQuantity(Math.min(...compareData.rows.map((row) => row.available_qty), 0))}</small>
+                  <div className="compare-search-wrap">
+                    <label className="compare-search">
+                      <Search size={16} />
+                      <input
+                        value={compareIngredient}
+                        onBlur={() => globalThis.setTimeout(() => setCompareSearchFocused(false), 180)}
+                        onChange={(event) => { setCompareIngredient(event.target.value); setSelectedCompareIngredient(""); }}
+                        onFocus={() => setCompareSearchFocused(true)}
+                        placeholder="Search ingredient"
+                      />
+                    </label>
+                    {compareSearchFocused && compareSuggestions.length > 0 && (
+                      <div className="compare-suggestions">
+                        {compareSuggestions.map((ingredient) => (
+                          <button key={ingredient} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setCompareIngredient(ingredient); setSelectedCompareIngredient(ingredient); setCompareSearchFocused(false); }}>{ingredient}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {compareData.rows.length > 0 && <small>{compareData.rows[0]?.pack_size || `${compareData.rows[0]?.unit ?? "unit"} based`} - Min qty {formatQuantity(Math.min(...compareData.rows.map((row) => row.available_qty)))}</small>}
                 </div>
                 <label className="compare-sort">
                   <span>Sort by</span>
@@ -1016,14 +1026,18 @@ export default function Home() {
                 </label>
               </div>
 
-              <p className="compare-note">
-                Showing {compareData.rows.length} suppliers who carry this ingredient - Top 3 shown as cards - AI score = price + quantity + reliability
-              </p>
+              {compareData.rows.length > 0 && (
+                <p className="compare-note">
+                  Showing {compareData.rows.length} suppliers who carry this ingredient - Top 3 shown as cards - AI score = price + quantity + reliability
+                </p>
+              )}
 
               {supplierLoading ? (
                 <div className="compare-empty">Loading mock comparison data...</div>
               ) : supplierError ? (
                 <div className="compare-empty">{supplierError}</div>
+              ) : !selectedCompareIngredient.trim() ? (
+                <div className="compare-empty">Select an ingredient from suggestions to compare suppliers.</div>
               ) : compareData.rows.length === 0 ? (
                 <div className="compare-empty">No mock suppliers found for this ingredient.</div>
               ) : (
@@ -1074,7 +1088,7 @@ export default function Home() {
                           ))}
                         </div>
 
-                        <button className="view-catalog-button" type="button" onClick={() => { setSelectedCatalogSupplier(row.supplier_name); setActiveTab("catalogs"); }}>View catalog</button>
+                        <button className="view-catalog-button" type="button" onClick={() => { setSelectedCatalogSupplier(row.supplier_name); setActiveTab("catalogs"); }}>View catalogue</button>
                       </article>
                     ))}
                   </div>
@@ -1202,7 +1216,6 @@ export default function Home() {
             <section className="supplier-window">
               <div className="supplier-toolbar">
                 <div>
-                  <p className="section-kicker">Supplier directory</p>
                   <h2>Suppliers</h2>
                 </div>
                 <div className="supplier-controls">
@@ -1213,9 +1226,9 @@ export default function Home() {
                   <label className="supplier-sort">
                     <span>Sort by</span>
                     <select value={supplierSort} onChange={(event) => setSupplierSort(event.target.value as SupplierSort)}>
-                      <option value="latest">Latest catalog</option>
+                      <option value="latest">Latest catalogue</option>
                       <option value="reliability">Reliability</option>
-                      <option value="items">Catalog items</option>
+                      <option value="items">Catalogue items</option>
                       <option value="name">Name</option>
                     </select>
                   </label>
@@ -1227,12 +1240,11 @@ export default function Home() {
                   <thead>
                     <tr>
                       <th>Supplier</th>
-                      <th>Domain</th>
+                      <th>Email</th>
                       <th>Items</th>
-                      <th>Best listed price</th>
                       <th>Total qty</th>
                       <th>Reliability</th>
-                      <th>Latest catalog</th>
+                      <th>Latest catalogue</th>
                       <th>View catalogue</th>
                     </tr>
                   </thead>
@@ -1250,13 +1262,11 @@ export default function Home() {
                             <span className="supplier-mini-badge">{supplierInitials(supplier.supplier_name)}</span>
                             <div>
                               <strong>{supplier.supplier_name}</strong>
-                              <small>{supplier.subject}</small>
                             </div>
                           </div>
                         </td>
                         <td>{supplier.email_domain}</td>
                         <td>{supplier.item_count}</td>
-                        <td>{supplier.best_item.currency} {supplier.best_item.price_per_unit.toFixed(2)}/{supplier.best_item.unit}</td>
                         <td>{formatQuantity(supplier.total_qty)}</td>
                         <td>{supplier.reliability_score.toFixed(1)}%</td>
                         <td>{formatRelativeTime(supplier.last_catalog_at)}</td>
@@ -1314,6 +1324,12 @@ export default function Home() {
     </>
   );
 }
+
+
+
+
+
+
 
 
 

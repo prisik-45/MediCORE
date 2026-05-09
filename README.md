@@ -56,7 +56,7 @@ Ingest supplier emails, extract attached PDF catalogs, normalize item data, rank
 5. Run the API:
 
    ```powershell
-   uv run -- python -m uvicorn backend.app.main:app --reload --port 8000
+   uv run -- python -m uvicorn backend.app.main:app --host 0.0.0.0 --reload --port 8000
    ```
 
 6. Run the worker only when you want email ingestion/background processing:
@@ -72,8 +72,9 @@ Ingest supplier emails, extract attached PDF catalogs, normalize item data, rank
    ```powershell
    cd frontend
    npm install
-   npm run dev
+   npm.cmd run dev -- --hostname 0.0.0.0
    ```
+8. Open url : http://192.168.29.44:3000
 
 ## Development vs Production Email
 
