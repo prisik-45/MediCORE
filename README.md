@@ -108,3 +108,39 @@ AWS production deployment:
 - Use ElastiCache or Upstash Redis
 - Use Supabase Pro, enable RLS policies in `supabase/migrations/001_init.sql`
 - Configure Gmail Pub/Sub webhook to `/webhooks/gmail`
+## IMAP Email Test
+
+For real Gmail IMAP testing, keep mock fallback disabled:
+
+```env
+EMAIL_MODE=imap
+MOCK_DATA_ENABLED=false
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_USERNAME=your-gmail-address@gmail.com
+IMAP_PASSWORD=your-gmail-app-password
+IMAP_MAILBOX=INBOX
+```
+
+The IMAP poller reads only unread emails with PDF attachments. If you already opened the test email, mark it unread in Gmail before polling.
+
+Quick direct test without Celery:
+
+```powershell
+uv run python -c "from backend.app.db import SessionLocal; from backend.app.services.email_ingestion import EmailIngestionService; db=SessionLocal(); print(EmailIngestionService(db).poll_imap_inbox()); db.close()"
+```
+
+Full worker test:
+
+```powershell
+redis-cli ping
+uv run uvicorn backend.app.main:app --host 0.0.0.0 --reload --port 8000
+uv run python -m celery -A backend.app.tasks worker --loglevel=info --pool=solo
+```
+
+Trigger a poll from another terminal:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8000/api/ingestion/poll-now
+```
+

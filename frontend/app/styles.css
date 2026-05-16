@@ -150,10 +150,9 @@ body.sidebar-collapsed .sidebar-footer button {
 }
 
 .sidebar-top {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
@@ -165,15 +164,6 @@ body.sidebar-collapsed .sidebar-footer button {
   text-transform: uppercase;
   color: var(--ink);
   letter-spacing: 1.2px;
-}
-/* center the MAIN label without affecting layout flow */
-.sidebar-top-label {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  margin: 0;
-  pointer-events: none;
 }
 
 body.sidebar-collapsed .sidebar-top {
@@ -1116,7 +1106,7 @@ th {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-width: 220px;
+  min-width: 260px;
   height: 34px;
   padding: 0 12px;
   border-radius: 999px;
@@ -1485,7 +1475,7 @@ th {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 220px;
+  min-width: 260px;
 }
 
 .supplier-name-cell strong,
@@ -1500,7 +1490,7 @@ th {
 }
 
 .supplier-name-cell small {
-  max-width: 280px;
+  max-width: 360px;
   margin-top: 3px;
   overflow: hidden;
   color: #6da797;
@@ -1583,7 +1573,7 @@ th {
 
 .catalog-search {
   flex: 1;
-  min-width: 220px;
+  min-width: 260px;
 }
 
 .catalog-filter-tabs {
@@ -1676,7 +1666,7 @@ th {
   z-index: 20;
   display: grid;
   gap: 4px;
-  min-width: 220px;
+  min-width: 260px;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1699,85 +1689,4 @@ th {
 .compare-suggestions button:hover {
   color: var(--accent);
   background: #e8f6f0;
-}
-
-.supplier-directory-table th:nth-child(3),
-.supplier-directory-table td:nth-child(3),
-.supplier-directory-table th:nth-child(4),
-.supplier-directory-table td:nth-child(4),
-.supplier-directory-table th:nth-child(5),
-.supplier-directory-table td:nth-child(5),
-.supplier-directory-table th:nth-child(6),
-.supplier-directory-table td:nth-child(6) {
-  text-align: right;
-}
-
-.supplier-directory-table th:nth-child(7),
-.supplier-directory-table td:nth-child(7) {
-  text-align: center;
-}
-
-.supplier-directory-table td:nth-child(2) {
-  color: #31544b;
-}
-
-.inbox-layout {
-  grid-template-columns: 260px minmax(0, 1fr);
-}
-
-.inbox-detail-panel {
-  padding: 22px 20px;
-  gap: 18px;
-}
-
-.inbox-panel-header {
-  padding: 14px 18px;
-}
-
-.inbox-column-header {
-  display: none;
-}
-
-.inbox-thread {
-  padding: 14px 18px;
-}
-
-.inbox-thread-topline {
-  margin-bottom: 8px;
-}
-
-.inbox-thread-subject {
-  margin: 0 0 8px;
-  color: #4f927f;
-  font-size: 12px;
-}
-
-.inbox-thread-meta {
-  justify-content: flex-start;
-}
-
-.inbox-panel-header-main {
-  padding-bottom: 14px;
-}
-
-.inbox-summary-grid {
-  gap: 14px;
-}
-
-.summary-card {
-  min-height: 112px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  text-align: center;
-  padding: 18px;
-}
-
-.summary-card strong {
-  margin-top: 12px;
-}
-
-.inbox-table-panel {
-  margin-top: 8px;
 }

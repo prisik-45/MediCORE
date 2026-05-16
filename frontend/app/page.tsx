@@ -686,7 +686,7 @@ export default function Home() {
             <section className="overview-dashboard">
               <div className="insight-banner">
                 {supplierLoading ? (
-                  "Loading mock catalogue intelligence..."
+                  "Loading catalogue intelligence..."
                 ) : supplierError ? (
                   supplierError
                 ) : topDashboardDeal ? (
@@ -695,7 +695,7 @@ export default function Home() {
                     <button type="button" onClick={() => setActiveTab("assistant")}>{"Review recommendation ->"}</button>
                   </>
                 ) : (
-                  "Mock catalogue data is ready for review."
+                  "No catalogue data extracted yet. Poll your inbox after sending an unread PDF email."
                 )}
               </div>
 
@@ -1324,6 +1324,7 @@ export default function Home() {
     </>
   );
 }
+
 
 
 

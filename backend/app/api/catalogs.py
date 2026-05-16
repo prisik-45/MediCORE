@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from backend.app.config import get_settings
 from backend.app.db import get_db
 from backend.app.models import CatalogEmail, CatalogItem, Supplier
 from backend.app.seed_mock_catalogs import build_catalogs
@@ -50,12 +51,14 @@ def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
 
 @router.get("/emails")
 def list_catalog_emails(db: Session = Depends(get_db), limit: int = Query(25, ge=1, le=100)) -> list[dict]:
+    settings = get_settings()
     stmt = (
         select(CatalogEmail, Supplier.name)
         .join(Supplier, Supplier.id == CatalogEmail.supplier_id)
-        .order_by(CatalogEmail.received_at.desc())
-        .limit(limit)
     )
+    if not settings.mock_data_enabled:
+        stmt = stmt.where(CatalogEmail.raw_email_id.not_like("core-mock-catalog-%"))
+    stmt = stmt.order_by(CatalogEmail.received_at.desc()).limit(limit)
     try:
         return [
             {
@@ -69,6 +72,8 @@ def list_catalog_emails(db: Session = Depends(get_db), limit: int = Query(25, ge
             for email, supplier_name in db.execute(stmt)
         ]
     except SQLAlchemyError:
+        if not settings.mock_data_enabled:
+            raise
         return mock_catalog_emails(limit)
 
 
@@ -78,7 +83,11 @@ def list_catalog_items(
     q: str | None = None,
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
+    settings = get_settings()
     stmt = select(CatalogItem, Supplier.name).join(Supplier, Supplier.id == CatalogItem.supplier_id)
+    if not settings.mock_data_enabled:
+        source = CatalogItem.raw_payload["source"].astext
+        stmt = stmt.where(or_(source.is_(None), source != "mock_extracted_catalogue"))
     if q:
         stmt = stmt.where(CatalogItem.normalized_name.ilike(f"%{q}%"))
     stmt = stmt.order_by(CatalogItem.price_per_unit.asc()).limit(limit)
@@ -100,5 +109,10 @@ def list_catalog_items(
             for item, supplier_name in db.execute(stmt)
         ]
     except SQLAlchemyError:
+        if not settings.mock_data_enabled:
+            raise
         return mock_catalog_items(q, limit)
+
+
+
 

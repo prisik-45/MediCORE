@@ -28,7 +28,7 @@ class GroqClient:
 
     def extract_catalog_items(self, pdf_text: str) -> list[ExtractedCatalogItem]:
         system = (
-            "Extract supplier catalog rows into strict JSON. Return an object with an items array. "
+            "Extract supplier catalogue rows into strict JSON. Return an object with an items array. "
             "Each item must include ingredient_name, normalized_name, price_per_unit, currency, "
             "available_qty, unit, valid_until when present, supplier_sku, lead_time_days, and notes. "
             "Normalize medicine/API names to lowercase canonical names. Convert INR/Rs/₹ to INR."
@@ -38,7 +38,7 @@ class GroqClient:
 
     def plan_query(self, question: str) -> QueryPlan:
         system = (
-            "You produce safe JSON query plans for a supplier catalog database. "
+            "You produce safe JSON query plans for a supplier catalogue database. "
             "Allowed operations: supplier_compare, best_price, catalog_search, history_compare, "
             "supplier_activity. Do not emit SQL. Use normalized_name for ingredient filters, "
             "min_quantity for stock requirements, and semantic_query for fuzzy product intent."
