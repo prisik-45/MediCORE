@@ -9,6 +9,7 @@ settings = get_settings()
 
 allowed_origins = {
     settings.frontend_origin,
+    "https://medi-core.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
@@ -34,3 +35,4 @@ app.include_router(catalogs.router, prefix="/api/catalogs", tags=["catalogs"])
 app.include_router(ingestion.router, prefix="/api/ingestion", tags=["ingestion"])
 app.include_router(chat.router)
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+
