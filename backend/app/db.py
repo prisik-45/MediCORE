@@ -13,6 +13,25 @@ settings = get_settings()
 
 
 def build_database_url() -> URL | str:
+    raw_url = settings.database_url.strip()
+
+    # In production, prefer an explicit DATABASE_URL first so Railway can supply
+    # a reachable Postgres connection string. The Supabase host fields are kept
+    # as a local-development convenience and fallback.
+    if raw_url and raw_url != "postgresql+psycopg://postgres:postgres@localhost:5432/postgres":
+        if raw_url.startswith("postgresql://"):
+            raw_url = raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+        parsed_url = make_url(raw_url)
+        if parsed_url.host is None or parsed_url.host.startswith("@"):
+            raise ValueError(
+                "DATABASE_URL is not valid for a TCP Postgres connection. "
+                "For Supabase, prefer setting SUPABASE_DB_HOST and SUPABASE_DB_PASSWORD in .env, "
+                "or URL-encode special characters in the password if you use DATABASE_URL."
+            )
+
+        return raw_url
+
     if settings.supabase_db_host and settings.supabase_db_password:
         return URL.create(
             "postgresql+psycopg",
@@ -23,7 +42,6 @@ def build_database_url() -> URL | str:
             database=settings.supabase_db_name,
         )
 
-    raw_url = settings.database_url.strip()
     if raw_url.startswith("postgresql://"):
         raw_url = raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
