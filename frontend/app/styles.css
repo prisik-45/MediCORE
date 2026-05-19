@@ -1290,15 +1290,18 @@ th {
   overflow: hidden;
 }
 
-.score-track i {
+.score-track svg {
   display: block;
+  width: 100%;
   height: 100%;
-  border-radius: inherit;
-  background: #64c9aa;
 }
 
-.compare-card.recommended .score-track i {
-  background: var(--accent);
+.score-track rect {
+  fill: #64c9aa;
+}
+
+.compare-card.recommended .score-track rect {
+  fill: var(--accent);
 }
 
 .view-catalog-button {

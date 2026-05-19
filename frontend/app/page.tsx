@@ -190,6 +190,8 @@ export default function Home() {
   const [compareSearchFocused, setCompareSearchFocused] = useState(false);
   const [compareSort, setCompareSort] = useState<CompareSort>("best-value");
   const socketRef = useRef<WebSocket | null>(null);
+  const productionApiBaseUrl = "https://backend-production-b29e.up.railway.app";
+  const productionWsUrl = "wss://backend-production-b29e.up.railway.app/ws/chat";
 
   const apiBaseUrl = useMemo(() => {
     if (process.env.NEXT_PUBLIC_API_URL) {
@@ -197,10 +199,14 @@ export default function Home() {
     }
 
     if (typeof window === "undefined") {
-      return "http://localhost:8000";
+      return productionApiBaseUrl;
     }
 
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:8000`;
+    }
+
+    return productionApiBaseUrl;
   }, []);
   const wsUrl = useMemo(() => {
     if (process.env.NEXT_PUBLIC_WS_URL) {
@@ -208,11 +214,15 @@ export default function Home() {
     }
 
     if (typeof window === "undefined") {
-      return "ws://localhost:8000/ws/chat";
+      return productionWsUrl;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${protocol}://${window.location.hostname}:8000/ws/chat`;
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      return `${protocol}://${window.location.hostname}:8000/ws/chat`;
+    }
+
+    return productionWsUrl;
   }, []);
   const showAssistantPanel = activeTab === "assistant";
 
@@ -1082,7 +1092,11 @@ export default function Home() {
                           ].map(([label, value]) => (
                             <div className="score-row" key={label}>
                               <span>{label}</span>
-                              <div className="score-track"><i style={{ width: `${value}%` }} /></div>
+                                <div className="score-track" aria-hidden="true">
+                                  <svg viewBox="0 0 100 5" preserveAspectRatio="none" role="presentation" focusable="false">
+                                    <rect x="0" y="0" width={Math.max(0, Math.min(100, Number(value)))} height="5" rx="2.5" />
+                                  </svg>
+                                </div>
                               <strong>{value}</strong>
                             </div>
                           ))}
