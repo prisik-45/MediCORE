@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     supabase_db_name: str = "postgres"
     supabase_db_user: str = "postgres"
     supabase_db_password: str = Field(default="", repr=False)
+    supabase_pooler_host: str = ""
+    supabase_pooler_port: int = 6543
+    supabase_pooler_user: str = ""
 
     redis_url: str = "redis://localhost:6379/0"
 

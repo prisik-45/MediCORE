@@ -93,6 +93,29 @@ Set the Gmail push subscription endpoint to the deployed FastAPI URL. The webhoo
 The LLM never talks to the database directly. Natural-language questions are converted into a whitelisted query plan, validated by Python, executed through parameterized Supabase/Postgres calls, and then summarized conversationally.
 
 ## Deployment
+### Railway Supabase Database URL
+
+Railway often cannot reach Supabase's direct database host (`db.<project-ref>.supabase.co:5432`) because that direct host can resolve to IPv6. Use Supabase Transaction Pooler for Railway instead.
+
+In Supabase, open **Project Settings -> Database -> Connection string -> Transaction pooler** and copy the host/user/password values into Railway:
+
+```env
+ENVIRONMENT=production
+FRONTEND_ORIGIN=https://medi-core-silk.vercel.app
+MOCK_DATA_ENABLED=false
+
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_STORAGE_BUCKET=catalog-pdfs
+
+SUPABASE_DB_NAME=postgres
+SUPABASE_DB_PASSWORD=your-database-password
+SUPABASE_POOLER_HOST=aws-0-your-region.pooler.supabase.com
+SUPABASE_POOLER_PORT=6543
+SUPABASE_POOLER_USER=postgres.your-project-ref
+```
+
+Alternatively, set Railway `DATABASE_URL` to the full Transaction Pooler URI from Supabase. Do not use the direct `db.<project-ref>.supabase.co:5432` URI on Railway.
 
 Railway/Vercel test deployment:
 
