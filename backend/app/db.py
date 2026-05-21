@@ -54,14 +54,18 @@ def build_pooler_url() -> URL | None:
     )
 
 
+def is_direct_supabase_url(url: str) -> bool:
+    return ".supabase.co:5432" in url and "pooler.supabase.com" not in url
+
+
 def build_database_url() -> URL | str:
+    raw_url = settings.database_url.strip()
+    if raw_url and raw_url != DEFAULT_DATABASE_URL and not is_direct_supabase_url(raw_url):
+        return repair_database_url(raw_url)
+
     pooler_url = build_pooler_url()
     if pooler_url is not None:
         return pooler_url
-
-    raw_url = settings.database_url.strip()
-    if raw_url and raw_url != DEFAULT_DATABASE_URL:
-        return repair_database_url(raw_url)
 
     if settings.supabase_db_host and settings.supabase_db_password:
         return URL.create(
