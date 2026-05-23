@@ -45,16 +45,15 @@ export default function LoginPage() {
         <div className="auth-card-glow"></div>
         <form className="auth-card" onSubmit={handleLogin}>
           <div className="auth-brand">
-            <div className="brand-logo">
-              <Sparkles className="brand-icon" />
+            <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+              <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">AI-Powered Catalog Intake & Procurement</p>
+            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
           </div>
 
-          <div className="auth-header-text">
+          <div className="auth-header-text" style={{ textAlign: "center" }}>
             <h2>Welcome Back</h2>
-            <p>Access your supplier intelligence dashboard</p>
           </div>
 
           {error && (

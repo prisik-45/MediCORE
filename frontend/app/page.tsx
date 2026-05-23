@@ -2,15 +2,20 @@
 
 import {
   BarChart3,
+  Bell,
   ChevronDown,
   FileText,
   GitCompare,
   Inbox,
+  Loader2,
   LogOut,
+  Mail,
   Menu,
+  Plus,
   Search,
   Send,
   Settings,
+  Shield,
   Sparkles,
   TrendingUp,
   Users,
@@ -84,6 +89,7 @@ type AuthUser = {
   email: string;
   name: string;
   role: "Admin";
+  organisation?: string;
 };
 
 type GmailSettings = {
@@ -297,6 +303,7 @@ export default function Home() {
   });
   const [savingSyncSettings, setSavingSyncSettings] = useState(false);
   const [settingsSaveFeedback, setSettingsSaveFeedback] = useState(false);
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
 
   // Add Account Form States
   const [addAccountExpanded, setAddAccountExpanded] = useState(false);
@@ -621,10 +628,12 @@ export default function Home() {
       if (session?.user) {
         const u = session.user;
         const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
+        const org = u.user_metadata?.organisation || "MediCORE Central";
         setAuthUser({
           email: u.email || "",
           name: name,
-          role: "Admin"
+          role: "Admin",
+          organisation: org
         });
         setLoginEmail(u.email || "");
         setLoginName(name);
@@ -640,10 +649,12 @@ export default function Home() {
       if (session?.user) {
         const u = session.user;
         const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
+        const org = u.user_metadata?.organisation || "MediCORE Central";
         setAuthUser({
           email: u.email || "",
           name: name,
-          role: "Admin"
+          role: "Admin",
+          organisation: org
         });
         setLoginEmail(u.email || "");
         setLoginName(name);
@@ -657,6 +668,32 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, [router]);
+
+  useEffect(() => {
+    async function checkEmailAccountOnboarding() {
+      if (!authUser) return;
+      try {
+        const res = await authFetch(`${apiBaseUrl}/api/email-accounts`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length === 0) {
+            router.push("/register/email-setup");
+          } else {
+            setOnboardingChecked(true);
+          }
+        } else {
+          setOnboardingChecked(true); // Fallback to dashboard on API error
+        }
+      } catch (err) {
+        console.error("Error during onboarding account check:", err);
+        setOnboardingChecked(true); // Fallback to dashboard on network error
+      }
+    }
+    
+    if (authChecked && authUser) {
+      checkEmailAccountOnboarding();
+    }
+  }, [authUser, authChecked, apiBaseUrl, router]);
 
   useEffect(() => {
     if (!authUser || typeof window === "undefined") return;
@@ -737,9 +774,14 @@ export default function Home() {
     };
   }, [apiBaseUrl, authUser, dataRefreshKey]);
 
-  function ensureSocket() {
+  async function ensureSocket() {
     if (socketRef.current?.readyState === WebSocket.OPEN) return socketRef.current;
-    const socket = new WebSocket(wsUrl);
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || "";
+    const authenticatedWsUrl = token ? `${wsUrl}?token=${token}` : wsUrl;
+
+    const socket = new WebSocket(authenticatedWsUrl);
     socket.onmessage = (event) => {
       const payload = JSON.parse(event.data);
       if (payload.type === "status") {
@@ -757,12 +799,12 @@ export default function Home() {
     return socket;
   }
 
-  function sendMessage(text = input) {
+  async function sendMessage(text = input) {
     const trimmed = text.trim();
     if (!trimmed) return;
     setMessages((current) => [...current, { role: "user", text: trimmed }]);
     setInput("");
-    const socket = ensureSocket();
+    const socket = await ensureSocket();
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(trimmed);
     } else {
@@ -1040,7 +1082,7 @@ export default function Home() {
     setEditingAccountId(null);
     setSetupStep(1);
     setNewAccountProvider("Gmail");
-    setNewAccountEmail("");
+    setNewAccountEmail(authUser?.email || "");
     setNewAccountPassword("");
     setNewAccountImapHost("imap.gmail.com");
     setNewAccountImapPort(993);
@@ -1055,11 +1097,25 @@ export default function Home() {
     if (authUser && activeTab === "settings") {
       fetchConnectedAccounts();
       fetchEmailSyncSettings();
+      setNewAccountEmail(authUser.email);
     }
   }, [authUser, activeTab]);
 
-  if (!authChecked) {
-    return <main className="auth-page"><div className="auth-card"><h1>MediCORE</h1><p>Loading workspace...</p></div></main>;
+  if (!authChecked || (authUser && !onboardingChecked)) {
+    return (
+      <main className="auth-page">
+        <div className="auth-card-wrapper" style={{ maxWidth: "420px" }}>
+          <div className="auth-card-glow"></div>
+          <div className="auth-card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "220px", textAlign: "center" }}>
+            <Loader2 className="animate-spin text-emerald" size={40} style={{ color: "#0f7a5f", marginBottom: "20px" }} />
+            <h2 style={{ fontSize: "18px", fontWeight: 700, color: "#17211c", margin: "0 0 8px 0" }}>Setting up your workspace</h2>
+            <p style={{ fontSize: "13px", color: "#66736d", margin: 0, lineHeight: 1.5 }}>
+              Verifying your credentials and preparing supplier catalogs...
+            </p>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (!authUser) {
@@ -1163,7 +1219,7 @@ export default function Home() {
                   onClick={() => setActiveTab("price-trends")}
                 >
                   <TrendingUp size={18} />
-                  <span>Price trends</span>
+                  <span>Price Trends</span>
                 </button>
               </li>
               <li className="sidebar-nav-item">
@@ -1205,6 +1261,18 @@ export default function Home() {
         <section className={`dashboard ${showAssistantPanel ? "assistant-layout" : ""}`}>
           {activeTab === "dashboard" && (
             <section className="overview-dashboard">
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderRadius: "10px",
+                border: "1px solid var(--line)",
+                background: "var(--panel)",
+                marginBottom: "8px"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Dashboard</h2>
+              </div>
               <div className="insight-banner">
                 {supplierLoading ? (
                   "Loading catalogue intelligence..."
@@ -1296,7 +1364,20 @@ export default function Home() {
           )}
 
           {activeTab === "inbox" && (
-            <div className="inbox-layout">
+            <>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderRadius: "10px",
+                border: "1px solid var(--line)",
+                background: "var(--panel)",
+                marginBottom: "24px"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Inbox</h2>
+              </div>
+              <div className="inbox-layout">
               <aside className="inbox-list-panel">
                 <div className="inbox-panel-header">
                   <div>
@@ -1414,6 +1495,7 @@ export default function Home() {
                 )}
               </section>
             </div>
+            </>
           )}
           {activeTab === "catalogs" && (
             <section className="catalog-window">
@@ -1510,11 +1592,12 @@ export default function Home() {
 
           {activeTab === "compare" && (
             <section className="compare-window">
-              <div className="compare-titlebar">
-                <h2>Compare</h2>
-              </div>
-              <div className="compare-toolbar">
-                <div className="compare-search-group">
+              <div className="compare-toolbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Compare</h2>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+                  <div className="compare-search-group">
                   <span>Comparing:</span>
                   <div className="compare-search-wrap">
                     <label className="compare-search">
@@ -1546,6 +1629,7 @@ export default function Home() {
                   </select>
                 </label>
               </div>
+            </div>
 
               {compareData.rows.length > 0 && (
                 <p className="compare-note">
@@ -1658,9 +1742,18 @@ export default function Home() {
 
           {activeTab === "price-trends" && (
             <>
-              <header className="topbar">
-                <h2>Price trends</h2>
-              </header>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderRadius: "10px",
+                border: "1px solid var(--line)",
+                background: "var(--panel)",
+                marginBottom: "24px"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Price Trends</h2>
+              </div>
               <div className="results-panel">
                 <div className="panel-title">
                   <TrendingUp size={18} />
@@ -1694,10 +1787,18 @@ export default function Home() {
 
           {activeTab === "assistant" && (
             <>
-              <header className="topbar">
-                <h2>AI Assistant</h2>
-              </header>
-
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderRadius: "10px",
+                border: "1px solid var(--line)",
+                background: "var(--panel)",
+                marginBottom: "24px"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>AI Assistant</h2>
+              </div>
               <section className="results-panel">
                 <div className="panel-title">
                   <Search size={18} />
@@ -1739,66 +1840,80 @@ export default function Home() {
 
 
           {activeTab === "settings" && (
-            <div className="settings-container" style={{
-              display: "grid",
-              gridTemplateColumns: "240px 1fr",
-              gap: "24px",
-              minHeight: "calc(100vh - var(--navbar-height) - 48px)",
-              padding: "24px 0",
-              alignItems: "stretch",
-            }}>
-              {/* Left Sidebar Sub-Navigation */}
-              <aside className="settings-sidebar" style={{
-                background: "rgba(255, 255, 255, 0.75)",
+            <>
+              <div className="settings-container" style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "24px",
+                minHeight: "calc(100vh - var(--navbar-height) - 48px)",
+                padding: "24px 0",
+                alignItems: "stretch",
+              }}>
+              {/* Horizontal Tabs Header Panel */}
+              <div className="settings-header-panel" style={{
+                background: "rgba(255, 255, 255, 0.85)",
                 backdropFilter: "blur(12px)",
                 border: "1px solid var(--line)",
                 borderRadius: "16px",
-                padding: "20px",
+                padding: "20px 24px",
                 display: "flex",
                 flexDirection: "column",
-                gap: "8px",
-                boxShadow: "0 4px 20px rgba(0, 0, 0, 0.02)",
-                height: "fit-content",
+                gap: "16px",
+                boxShadow: "0 4px 20px rgba(0, 0, 0, 0.015)",
               }}>
-                <div style={{ padding: "0 12px 16px 12px", borderBottom: "1px solid var(--line)", marginBottom: "8px" }}>
-                  <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "var(--accent)" }}>MediCORE</h3>
-                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>Workspace Settings</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Workspace Settings</h2>
                 </div>
                 
-                {[
-                  { id: "profile", label: "Profile", icon: <Users size={16} /> },
-                  { id: "email", label: "Email Access", icon: <Inbox size={16} /> },
-                  { id: "notifications", label: "Notifications", icon: <span style={{ display: "inline-flex" }}>🔔</span> },
-                  { id: "security", label: "Security", icon: <span style={{ display: "inline-flex" }}>🛡️</span> },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setSettingsActiveTab(tab.id as any)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px",
-                      width: "100%",
-                      padding: "12px 16px",
-                      borderRadius: "10px",
-                      border: "none",
-                      background: settingsActiveTab === tab.id ? "rgba(15, 122, 95, 0.08)" : "transparent",
-                      color: settingsActiveTab === tab.id ? "var(--accent)" : "var(--ink)",
-                      fontWeight: settingsActiveTab === tab.id ? 600 : 500,
-                      cursor: "pointer",
-                      textAlign: "left",
-                      transition: "all 0.2s ease",
-                    }}
-                    className="sidebar-tab-btn"
-                  >
-                    {tab.icon}
-                    <span>{tab.label}</span>
-                    {settingsActiveTab === tab.id && (
-                      <span style={{ marginLeft: "auto", width: "4px", height: "16px", borderRadius: "2px", background: "var(--accent)" }}></span>
-                    )}
-                  </button>
-                ))}
-              </aside>
+                <div style={{
+                  display: "flex",
+                  gap: "8px",
+                  borderBottom: "1px solid var(--line)",
+                  paddingBottom: "8px",
+                  overflow: "hidden"
+                }}>
+                  {[
+                    { id: "profile", label: "Profile", icon: <Users size={16} /> },
+                    { id: "email", label: "Email Access", icon: <Inbox size={16} /> },
+                    { id: "notifications", label: "Notifications", icon: <Bell size={16} /> },
+                    { id: "security", label: "Security", icon: <Shield size={16} /> },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setSettingsActiveTab(tab.id as any)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "10px 20px",
+                        borderRadius: "8px",
+                        border: "none",
+                        background: settingsActiveTab === tab.id ? "rgba(15, 122, 95, 0.08)" : "transparent",
+                        color: settingsActiveTab === tab.id ? "var(--accent)" : "var(--ink)",
+                        fontWeight: settingsActiveTab === tab.id ? 600 : 500,
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        position: "relative",
+                      }}
+                      className="settings-tab-btn"
+                    >
+                      {tab.icon}
+                      <span>{tab.label}</span>
+                      {settingsActiveTab === tab.id && (
+                        <div style={{
+                          position: "absolute",
+                          bottom: "-9px",
+                          left: "0",
+                          right: "0",
+                          height: "3px",
+                          background: "var(--accent)",
+                          borderRadius: "3px 3px 0 0"
+                        }} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Right Content Pane */}
               <main className="settings-content" style={{
@@ -1838,7 +1953,7 @@ export default function Home() {
                       </div>
                       <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px" }}>
                         <span style={{ fontSize: "12px", color: "var(--muted)", display: "block", marginBottom: "4px" }}>Organisation</span>
-                        <strong style={{ fontSize: "15px", color: "var(--ink)" }}>MediCORE Central</strong>
+                        <strong style={{ fontSize: "15px", color: "var(--ink)" }}>{authUser.organisation || "MediCORE Central"}</strong>
                       </div>
                     </div>
                   </div>
@@ -1869,7 +1984,7 @@ export default function Home() {
                           alignItems: "center",
                           gap: "12px",
                         }}>
-                          <span style={{ fontSize: "32px" }}>📨</span>
+                          <Mail size={32} style={{ color: "var(--muted)" }} />
                           <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>No connected accounts yet</h4>
                           <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", maxWidth: "320px" }}>
                             Link a Gmail inbox with an App Password to begin pulling catalogue PDFs automatically.
@@ -2011,7 +2126,7 @@ export default function Home() {
                             transition: "all 0.2s ease"
                           }}
                         >
-                          <span>➕</span> Add email account
+                          <Plus size={16} /> Link employee email account
                         </button>
                       ) : (
                         <div style={{
@@ -2077,7 +2192,7 @@ export default function Home() {
                                     gap: "16px",
                                   }}
                                 >
-                                  <span style={{ fontSize: "28px" }}>📧</span>
+                                  <Mail size={28} style={{ color: "var(--accent)" }} />
                                   <div>
                                     <strong style={{ display: "block", fontSize: "15px" }}>Gmail</strong>
                                     <span style={{ fontSize: "12px", color: "var(--muted)" }}>Poll securely using custom credentials & App Passwords.</span>
@@ -2134,49 +2249,18 @@ export default function Home() {
                           {/* STEP 3: Credentials Form */}
                           {setupStep === 3 && (
                             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 3: Setup Credentials & Test Connection</span>
+                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 3: Setup App Password & Test Connection</span>
                               
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>Email Address</span>
-                                  <input
-                                    type="email"
-                                    value={newAccountEmail}
-                                    onChange={(e) => setNewAccountEmail(e.target.value)}
-                                    placeholder="your-business-inbox@gmail.com"
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
-                                  />
-                                </label>
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>App Password</span>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                  <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Gmail App Password</span>
                                   <input
                                     type="password"
                                     value={newAccountPassword}
                                     onChange={(e) => setNewAccountPassword(e.target.value)}
                                     placeholder={editingAccountId ? "•••••••••••••••• (Leave blank to keep current)" : "16-character app password"}
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                    style={{ padding: "12px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff", fontSize: "14px" }}
                                     autoComplete="off"
-                                  />
-                                </label>
-                              </div>
-
-                              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px" }}>
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>IMAP Server Host</span>
-                                  <input
-                                    type="text"
-                                    value={newAccountImapHost}
-                                    onChange={(e) => setNewAccountImapHost(e.target.value)}
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
-                                  />
-                                </label>
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>IMAP Port</span>
-                                  <input
-                                    type="number"
-                                    value={newAccountImapPort}
-                                    onChange={(e) => setNewAccountImapPort(Number(e.target.value))}
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
                                   />
                                 </label>
                               </div>
@@ -2434,13 +2518,14 @@ export default function Home() {
                 )}
               </main>
             </div>
+            </>
           )}
 
           {activeTab === "suppliers" && (
             <section className="supplier-window">
-              <div className="supplier-toolbar">
+              <div className="supplier-toolbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <h2>Suppliers</h2>
+                  <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Suppliers</h2>
                 </div>
                 <div className="supplier-controls">
                   <label className="supplier-search">

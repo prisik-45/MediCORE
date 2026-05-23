@@ -12,12 +12,20 @@ export default function RegisterStep1Page() {
   const [organisation, setOrganisation] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [signUpSuccess, setSignUpSuccess] = useState(false);
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -40,15 +48,21 @@ export default function RegisterStep1Page() {
       }
 
       if (!data.user) {
-        setError("Sign up succeeded but user was not created. Please contact support.");
+        // If data.user is null but no error, it usually means email is already registered and Supabase prevents enumeration.
+        // We still show the check email success to keep standard security flow.
+        setSignUpSuccess(true);
         setLoading(false);
         return;
       }
 
-      // If user is auto-confirmed, sign in should work immediately.
-      // Supabase by default auto-signs-in on signup in dev environments.
-      // If a session is active, we proceed. Even if session is not active,
-      // we attempt standard login or redirect to email setup which will verify.
+      // If Supabase email confirmation is enabled, session will be null because user has to verify email first.
+      if (!data.session) {
+        setSignUpSuccess(true);
+        setLoading(false);
+        return;
+      }
+
+      // If user is auto-confirmed, proceed to email setup directly.
       router.push("/register/email-setup");
       router.refresh();
     } catch (err) {
@@ -57,17 +71,64 @@ export default function RegisterStep1Page() {
     }
   }
 
+  if (signUpSuccess) {
+    return (
+      <main className="auth-page">
+        <div className="auth-card-wrapper">
+          <div className="auth-card-glow"></div>
+          <div className="auth-card" style={{ textAlign: "center" }}>
+            <div className="auth-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+                <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              </div>
+              <h1>MediCORE</h1>
+              <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+            </div>
+
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "64px",
+              height: "64px",
+              background: "rgba(15, 122, 95, 0.08)",
+              color: "#0f7a5f",
+              borderRadius: "50%",
+              margin: "24px 0 16px 0",
+            }}>
+              <Mail size={32} />
+            </div>
+
+            <h2 style={{ fontSize: "22px", fontWeight: 700, color: "#17211c", margin: "0 0 10px 0" }}>Verify Your Email</h2>
+            <p style={{ fontSize: "14px", color: "#66736d", lineHeight: 1.6, margin: "0 0 24px 0" }}>
+              We have sent a verification link to <strong style={{ color: "#17211c" }}>{email}</strong>.<br />
+              Please click the link in the email to confirm your account and proceed to **Step 2: Email Setup**.
+            </p>
+
+            <div style={{ padding: "16px", background: "#f4f7f5", borderRadius: "10px", fontSize: "12px", color: "#66736d", textAlign: "left", lineHeight: 1.5, marginBottom: "24px" }}>
+              <strong>Tip:</strong> If you don't see the email within a few minutes, please check your Spam or Junk folder.
+            </div>
+
+            <Link href="/login" className="auth-submit-btn" style={{ textDecoration: "none" }}>
+              Proceed to Sign In
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="auth-page">
       <div className="auth-card-wrapper">
         <div className="auth-card-glow"></div>
         <div className="auth-card">
           <div className="auth-brand">
-            <div className="brand-logo">
-              <Sparkles className="brand-icon" />
+            <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+              <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">AI-Powered Catalog Intake & Procurement</p>
+            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
           </div>
 
           {/* Step indicator */}
@@ -88,9 +149,8 @@ export default function RegisterStep1Page() {
             </div>
           </div>
 
-          <div className="auth-header-text">
+          <div className="auth-header-text" style={{ textAlign: "center" }}>
             <h2>Create Your Account</h2>
-            <p>Step 1 of 3: Enter your profile details</p>
           </div>
 
           {error && (
@@ -120,7 +180,7 @@ export default function RegisterStep1Page() {
 
             <div className="input-group">
               <label htmlFor="organisation">
-                <span>Organisation / Clinic</span>
+                <span>Company Name</span>
                 <div className="input-with-icon">
                   <Briefcase className="field-icon" />
                   <input
@@ -163,6 +223,24 @@ export default function RegisterStep1Page() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    autoComplete="new-password"
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div className="input-group">
+              <label htmlFor="confirmPassword">
+                <span>Confirm Password</span>
+                <div className="input-with-icon">
+                  <Lock className="field-icon" />
+                  <input
+                    id="confirmPassword"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
                     required
                     autoComplete="new-password"

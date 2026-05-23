@@ -174,11 +174,11 @@ export default function EmailSetupPage() {
         <div className="auth-card-glow"></div>
         <div className="auth-card">
           <div className="auth-brand">
-            <div className="brand-logo">
-              <Sparkles className="brand-icon" />
+            <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+              <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">AI-Powered Catalog Intake & Procurement</p>
+            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
           </div>
 
           {/* Step indicator */}
@@ -199,9 +199,8 @@ export default function EmailSetupPage() {
             </div>
           </div>
 
-          <div className="auth-header-text">
+          <div className="auth-header-text" style={{ textAlign: "center" }}>
             <h2>Connect Supplier Inbox</h2>
-            <p>Step 2 of 3: Connect your email to intake catalogues automatically</p>
           </div>
 
           {error && (
@@ -256,6 +255,8 @@ export default function EmailSetupPage() {
                     onChange={(e) => setEmailAddress(e.target.value)}
                     placeholder="sarah@coreconsultancy.com"
                     required
+                    readOnly
+                    style={{ opacity: 0.8, cursor: "not-allowed", backgroundColor: "#f4f7f5" }}
                   />
                 </div>
               </label>

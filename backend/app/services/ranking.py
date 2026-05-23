@@ -1,3 +1,4 @@
+from typing import Any
 from sqlalchemy import Select, asc, desc, select
 from sqlalchemy.orm import Session
 
@@ -9,13 +10,16 @@ class SupplierRanker:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def ranked_items(self, plan: QueryPlan) -> list[dict]:
+    def ranked_items(self, plan: QueryPlan, tenant_id: Any | None = None) -> list[dict]:
+        from uuid import UUID
         stmt: Select = (
             select(CatalogItem, Supplier)
             .join(Supplier, Supplier.id == CatalogItem.supplier_id)
             .order_by(asc(CatalogItem.price_per_unit), desc(Supplier.reliability_score))
             .limit(plan.limit)
         )
+        if tenant_id:
+            stmt = stmt.where(CatalogItem.tenant_id == (UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id))
         if plan.normalized_name:
             stmt = stmt.where(CatalogItem.normalized_name.ilike(f"%{plan.normalized_name.lower()}%"))
         if plan.min_quantity:

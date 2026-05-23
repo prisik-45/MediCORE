@@ -7,7 +7,8 @@ import httpx
 from datetime import UTC, datetime
 from email.message import Message
 from pathlib import Path
-from uuid import uuid4
+from typing import Any
+from uuid import uuid4, UUID
 
 from sqlalchemy.orm import Session
 
@@ -118,7 +119,7 @@ class EmailIngestionService:
             gmail.mark_read(message_id)
         return processed
 
-    def _process_message(self, message: Message, raw_email_id: str) -> int:
+    def _process_message(self, message: Message, raw_email_id: str, tenant_id: Any | None = None) -> int:
         if self._email_has_items(raw_email_id):
             logger.info("Skipping already-extracted email id=%s", raw_email_id)
             return 0
@@ -130,7 +131,7 @@ class EmailIngestionService:
         if not attachments:
             return 0
 
-        supplier = self._upsert_supplier(sender)
+        supplier = self._upsert_supplier(sender, tenant_id=tenant_id)
         count = 0
 
         for attachment_name, pdf_bytes in attachments:
@@ -154,7 +155,7 @@ class EmailIngestionService:
                     pdf_url = self._upload_pdf(pdf_path, raw_email_id)
                     catalog_email = CatalogEmail(
                         id=uuid4(),
-                        tenant_id=supplier.tenant_id,
+                        tenant_id=tenant_id or supplier.tenant_id,
                         supplier_id=supplier.id,
                         raw_email_id=attachment_email_id,
                         subject=subject,
@@ -168,7 +169,7 @@ class EmailIngestionService:
                 text = extract_pdf_text(pdf_path)
                 logger.info("Extracted %s characters of PDF text from %s", len(text), attachment_name)
                 extracted = self._extract_items_from_text(text, attachment_name)
-                count += self._store_catalog_items(catalog_email, supplier, extracted, text)
+                count += self._store_catalog_items(catalog_email, supplier, extracted, text, tenant_id=tenant_id)
                 catalog_email.processing_status = "completed"
                 self._touch_supplier_last_email(supplier, catalog_email.received_at)
         self.db.commit()
@@ -215,7 +216,7 @@ class EmailIngestionService:
                 text = extract_pdf_text(pdf_path)
                 logger.info("Extracted %s characters while reprocessing email id=%s", len(text), catalog_email.raw_email_id)
                 extracted = self._extract_items_from_text(text, str(catalog_email.id))
-                processed += self._store_catalog_items(catalog_email, supplier, extracted, text)
+                processed += self._store_catalog_items(catalog_email, supplier, extracted, text, tenant_id=catalog_email.tenant_id)
                 catalog_email.processing_status = "completed"
                 self._touch_supplier_last_email(supplier, catalog_email.received_at)
         self.db.commit()
@@ -240,7 +241,7 @@ class EmailIngestionService:
             logger.exception("LLM extraction failed for %s", source_name)
             return []
 
-    def _store_catalog_items(self, catalog_email: CatalogEmail, supplier: Supplier, items, text: str) -> int:
+    def _store_catalog_items(self, catalog_email: CatalogEmail, supplier: Supplier, items, text: str, tenant_id: Any | None = None) -> int:
         count = 0
         for item in items:
             item_text = (
@@ -253,7 +254,7 @@ class EmailIngestionService:
             self.db.add(
                 CatalogItem(
                     id=uuid4(),
-                    tenant_id=supplier.tenant_id,
+                    tenant_id=tenant_id or supplier.tenant_id,
                     catalog_email_id=catalog_email.id,
                     supplier_id=supplier.id,
                     ingredient_name=item.ingredient_name,
@@ -296,15 +297,22 @@ class EmailIngestionService:
             is not None
         )
 
-    def _upsert_supplier(self, sender: str) -> Supplier:
+    def _upsert_supplier(self, sender: str, tenant_id: Any | None = None) -> Supplier:
         domain = sender.split("@")[-1].lower() if "@" in sender else sender.lower()
-        supplier = self.db.query(Supplier).filter(Supplier.email_domain == domain).first()
+        if tenant_id:
+            supplier = self.db.query(Supplier).filter(
+                Supplier.email_domain == domain,
+                Supplier.tenant_id == tenant_id
+            ).first()
+        else:
+            supplier = self.db.query(Supplier).filter(Supplier.email_domain == domain).first()
+
         if supplier:
             return supplier
 
         supplier = Supplier(
             id=uuid4(),
-            tenant_id=uuid4(),
+            tenant_id=tenant_id or uuid4(),
             name=domain.split(".")[0].replace("-", " ").title(),
             email_domain=domain,
             reliability_score=50,
@@ -421,7 +429,7 @@ class EmailIngestionService:
                     
                     # Process message if we have attachments and matched everything
                     if attachments:
-                        processed += self._process_message(message, raw_email_id=msg_id.decode())
+                        processed += self._process_message(message, raw_email_id=msg_id.decode(), tenant_id=account.user_id)
                 
                 # Update status
                 account.sync_status = "ok"
