@@ -30,13 +30,23 @@ class EmailIngestionService:
         self.settings = get_settings()
         self.llm = GroqClient()
 
-    def preview_imap_inbox(self) -> dict:
-        if self.settings.email_mode != "imap":
+    def preview_imap_inbox(
+        self,
+        imap_username: str | None = None,
+        imap_password: str | None = None,
+        imap_mailbox: str | None = None,
+    ) -> dict:
+        using_supplied_credentials = bool(imap_username and imap_password)
+        if self.settings.email_mode != "imap" and not using_supplied_credentials:
             return {"email_mode": self.settings.email_mode, "unread_count": 0, "pdf_messages": []}
 
+        username = imap_username or self.settings.imap_username
+        password = imap_password or self.settings.imap_password
+        mailbox = imap_mailbox or self.settings.imap_mailbox
+
         with imaplib.IMAP4_SSL(self.settings.imap_host, self.settings.imap_port, timeout=30) as client:
-            client.login(self.settings.imap_username, self.settings.imap_password)
-            client.select(self.settings.imap_mailbox)
+            client.login(username, password)
+            client.select(mailbox)
             _, message_ids = client.search(None, "UNSEEN")
             ids = message_ids[0].split() if message_ids and message_ids[0] else []
             pdf_messages = []
@@ -56,23 +66,33 @@ class EmailIngestionService:
                         }
                     )
             return {
-                "email_mode": self.settings.email_mode,
-                "mailbox": self.settings.imap_mailbox,
+                "email_mode": "imap" if using_supplied_credentials else self.settings.email_mode,
+                "mailbox": mailbox,
                 "unread_count": len(ids),
                 "pdf_message_count": len(pdf_messages),
                 "pdf_messages": pdf_messages,
             }
 
-    def poll_imap_inbox(self) -> int:
-        if self.settings.email_mode != "imap":
+    def poll_imap_inbox(
+        self,
+        imap_username: str | None = None,
+        imap_password: str | None = None,
+        imap_mailbox: str | None = None,
+    ) -> int:
+        using_supplied_credentials = bool(imap_username and imap_password)
+        if self.settings.email_mode != "imap" and not using_supplied_credentials:
             logger.info("Skipping IMAP poll because EMAIL_MODE=%s", self.settings.email_mode)
             return 0
 
+        username = imap_username or self.settings.imap_username
+        password = imap_password or self.settings.imap_password
+        mailbox = imap_mailbox or self.settings.imap_mailbox
+
         processed = 0
-        logger.info("Connecting to IMAP mailbox %s:%s/%s", self.settings.imap_host, self.settings.imap_port, self.settings.imap_mailbox)
+        logger.info("Connecting to IMAP mailbox %s:%s/%s", self.settings.imap_host, self.settings.imap_port, mailbox)
         with imaplib.IMAP4_SSL(self.settings.imap_host, self.settings.imap_port, timeout=30) as client:
-            client.login(self.settings.imap_username, self.settings.imap_password)
-            client.select(self.settings.imap_mailbox)
+            client.login(username, password)
+            client.select(mailbox)
             _, message_ids = client.search(None, "UNSEEN")
             ids = message_ids[0].split() if message_ids and message_ids[0] else []
             logger.info("Found %s unread IMAP message(s)", len(ids))
@@ -313,3 +333,107 @@ class EmailIngestionService:
             {"content-type": "application/pdf", "upsert": "true"},
         )
         return supabase.storage.from_(self.settings.supabase_storage_bucket).get_public_url(object_path)
+
+    def poll_account_inbox(self, account_id: UUID) -> int:
+        from backend.app.models import EmailAccount, EmailFilter
+        from backend.app.auth import decrypt_password
+
+        account = self.db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
+        if not account:
+            logger.error("EmailAccount %s not found for polling", account_id)
+            return 0
+
+        # Decrypt password securely
+        try:
+            password = decrypt_password(account.encrypted_password)
+        except Exception as e:
+            logger.error("Failed to decrypt password for email account %s: %s", account_id, e)
+            account.sync_status = "error"
+            account.sync_error_msg = f"Failed to decrypt app password: {str(e)}"
+            self.db.commit()
+            return 0
+
+        # Run IMAP connection
+        processed = 0
+        try:
+            logger.info("Connecting to IMAP for %s at %s:%s", account.email_address, account.imap_host, account.imap_port)
+            if account.imap_port == 993:
+                client = imaplib.IMAP4_SSL(account.imap_host, account.imap_port, timeout=30)
+            else:
+                client = imaplib.IMAP4(account.imap_host, account.imap_port, timeout=30)
+            
+            with client:
+                client.login(account.email_address, password)
+                client.select("INBOX")
+                
+                # Fetch filters
+                active_filter = self.db.query(EmailFilter).filter(EmailFilter.email_account_id == account.id).first()
+                
+                # Search unseen emails
+                _, message_ids = client.search(None, "UNSEEN")
+                ids = message_ids[0].split() if message_ids and message_ids[0] else []
+                logger.info("Account %s has %s unread messages", account.email_address, len(ids))
+                
+                for msg_id in ids:
+                    logger.info("Fetching message id=%s for account %s", msg_id.decode(), account.email_address)
+                    _, data = client.fetch(msg_id, "(RFC822)")
+                    if not data or not isinstance(data[0], tuple):
+                        continue
+                    
+                    message = email.message_from_bytes(data[0][1])
+                    
+                    # Apply keyword / attachment filters
+                    sender = email.utils.parseaddr(message.get("From", ""))[1]
+                    subject = message.get("Subject") or ""
+                    
+                    # Check Promotions/Newsletters first
+                    if active_filter and active_filter.skip_promotions_tab:
+                        labels = message.get("X-Gmail-Labels", "")
+                        list_unsubscribe = message.get("List-Unsubscribe", "")
+                        precedence = message.get("Precedence", "")
+                        if "promotions" in labels.lower() or "category-promo" in labels.lower() or list_unsubscribe or precedence.lower() in ("bulk", "list"):
+                            logger.info("Skipping email id=%s because it matches promotions/bulk tab signature", msg_id.decode())
+                            continue
+
+                    # Require PDF attachments
+                    attachments = self._pdf_attachments(message)
+                    if active_filter and active_filter.require_attachment and not attachments:
+                        logger.info("Skipping email id=%s because PDF attachment is required but none found", msg_id.decode())
+                        continue
+                    
+                    # Sender keywords filter (comma-separated, case-insensitive)
+                    if active_filter and active_filter.sender_keywords:
+                        keywords = [kw.strip().lower() for kw in active_filter.sender_keywords.split(",") if kw.strip()]
+                        if keywords:
+                            matched = any(kw in sender.lower() for kw in keywords)
+                            if not matched:
+                                logger.info("Skipping email id=%s because sender %s doesn't match sender_keywords", msg_id.decode(), sender)
+                                continue
+                    
+                    # Subject keywords filter (comma-separated, case-insensitive)
+                    if active_filter and active_filter.subject_keywords:
+                        keywords = [kw.strip().lower() for kw in active_filter.subject_keywords.split(",") if kw.strip()]
+                        if keywords:
+                            matched = any(kw in subject.lower() for kw in keywords)
+                            if not matched:
+                                logger.info("Skipping email id=%s because subject %r doesn't match subject_keywords", msg_id.decode(), subject)
+                                continue
+                    
+                    # Process message if we have attachments and matched everything
+                    if attachments:
+                        processed += self._process_message(message, raw_email_id=msg_id.decode())
+                
+                # Update status
+                account.sync_status = "ok"
+                account.sync_error_msg = None
+                account.last_synced_at = datetime.now(UTC)
+                self.db.commit()
+                logger.info("Successfully finished polling for %s; processed %s", account.email_address, processed)
+                
+        except Exception as e:
+            logger.exception("Error polling account %s", account.email_address)
+            account.sync_status = "error"
+            account.sync_error_msg = f"IMAP connection failed: {str(e)}"
+            self.db.commit()
+
+        return processed

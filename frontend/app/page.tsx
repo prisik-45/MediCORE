@@ -16,7 +16,9 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 type ChatMessage = {
   role: "user" | "assistant" | "status";
@@ -57,7 +59,7 @@ type SupplierTableRow = SupplierItem & {
   reliability_score: number;
 };
 
-type SidebarTab = "dashboard" | "inbox" | "catalogs" | "analysis" | "compare" | "price-trends" | "assistant" | "suppliers";
+type SidebarTab = "dashboard" | "inbox" | "catalogs" | "analysis" | "compare" | "price-trends" | "assistant" | "suppliers" | "settings";
 
 type CompareSort = "best-value" | "lowest-price" | "highest-qty";
 type SupplierSort = "name" | "reliability" | "items" | "latest";
@@ -76,6 +78,66 @@ type InboxThread = {
   status_label: string;
   status_tone: "processed" | "pending" | "review";
   items: SupplierTableRow[];
+};
+
+type AuthUser = {
+  email: string;
+  name: string;
+  role: "Admin";
+};
+
+type GmailSettings = {
+  email: string;
+  appPassword: string;
+  mailbox: string;
+  autoPoll: boolean;
+};
+
+type GmailPreviewResponse = {
+  unread_count?: number;
+  pdf_message_count?: number;
+  mailbox?: string;
+  pdf_messages?: Array<{ subject?: string | null; pdf_attachments?: string[] }>;
+};
+
+type EmailFilter = {
+  id?: string;
+  require_attachment: boolean;
+  sender_keywords: string | null;
+  subject_keywords: string | null;
+  skip_promotions_tab: boolean;
+};
+
+type ConnectedEmailAccount = {
+  id: string;
+  user_id: string;
+  provider: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: number;
+  sync_status: string;
+  sync_error_msg?: string | null;
+  last_synced_at?: string | null;
+  created_at: string;
+  filters: EmailFilter[];
+};
+
+type EmailSyncSetting = {
+  id: string;
+  user_id: string;
+  poll_interval_minutes: number;
+  auto_extract_catalog: boolean;
+  notify_on_new_catalog: boolean;
+};
+
+const AUTH_STORAGE_KEY = "medicore-auth-user";
+const GMAIL_SETTINGS_STORAGE_KEY = "medicore-gmail-settings";
+
+const defaultGmailSettings: GmailSettings = {
+  email: "",
+  appPassword: "",
+  mailbox: "INBOX",
+  autoPoll: false,
 };
 
 const exampleQuestions = [
@@ -127,20 +189,32 @@ function formatInboxDate(value: string | null | undefined): string {
   });
 }
 
+const RUPEE_SYMBOL = "\u20B9";
+
+function currencySymbol(currency: string | null | undefined): string {
+  return (currency ?? "INR").toUpperCase() === "INR" ? RUPEE_SYMBOL : currency ?? "";
+}
+
+function formatMoney(value: number, currency = "INR"): string {
+  const symbol = currencySymbol(currency);
+  const separator = symbol === RUPEE_SYMBOL ? "" : " ";
+  return `${symbol}${separator}${value.toFixed(2)}`;
+}
+
 function formatCompactCurrency(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
-    return "?0";
+    return `${RUPEE_SYMBOL}0`;
   }
 
   if (value >= 100000) {
-    return `?${(value / 100000).toFixed(1)}L`;
+    return `${RUPEE_SYMBOL}${(value / 100000).toFixed(1)}L`;
   }
 
   if (value >= 1000) {
-    return `?${(value / 1000).toFixed(1)}K`;
+    return `${RUPEE_SYMBOL}${(value / 1000).toFixed(1)}K`;
   }
 
-  return `?${value.toFixed(0)}`;
+  return `${RUPEE_SYMBOL}${value.toFixed(0)}`;
 }
 
 function formatQuantity(value: number): string {
@@ -163,7 +237,18 @@ function supplierInitials(name: string): string {
     .join("") || "S";
 }
 
+function userInitials(name: string, email: string): string {
+  const source = name.trim() || email.split("@")[0] || "U";
+  return source
+    .split(/[.\s_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+}
+
 export default function Home() {
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -189,6 +274,51 @@ export default function Home() {
   const [selectedCompareIngredient, setSelectedCompareIngredient] = useState("");
   const [compareSearchFocused, setCompareSearchFocused] = useState(false);
   const [compareSort, setCompareSort] = useState<CompareSort>("best-value");
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginName, setLoginName] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [gmailSettings, setGmailSettings] = useState<GmailSettings>(defaultGmailSettings);
+  const [settingsStatus, setSettingsStatus] = useState("");
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [dataRefreshKey, setDataRefreshKey] = useState(0);
+
+  // Settings Redesign States
+  const [settingsActiveTab, setSettingsActiveTab] = useState<"profile" | "email" | "notifications" | "security">("profile");
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedEmailAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [syncSettings, setSyncSettings] = useState<EmailSyncSetting>({
+    id: "",
+    user_id: "",
+    poll_interval_minutes: 15,
+    auto_extract_catalog: true,
+    notify_on_new_catalog: true
+  });
+  const [savingSyncSettings, setSavingSyncSettings] = useState(false);
+  const [settingsSaveFeedback, setSettingsSaveFeedback] = useState(false);
+
+  // Add Account Form States
+  const [addAccountExpanded, setAddAccountExpanded] = useState(false);
+  const [setupStep, setSetupStep] = useState(1);
+  const [newAccountProvider, setNewAccountProvider] = useState("Gmail");
+  const [newAccountEmail, setNewAccountEmail] = useState("");
+  const [newAccountPassword, setNewAccountPassword] = useState("");
+  const [newAccountImapHost, setNewAccountImapHost] = useState("imap.gmail.com");
+  const [newAccountImapPort, setNewAccountImapPort] = useState(993);
+  
+  // Filters States
+  const [filterRequireAttachment, setFilterRequireAttachment] = useState(false);
+  const [filterSenderKeywords, setFilterSenderKeywords] = useState("");
+  const [filterSubjectKeywords, setFilterSubjectKeywords] = useState("");
+  const [filterSkipPromotions, setFilterSkipPromotions] = useState(false);
+  
+  // Connection Testing States
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [syncingAccountsState, setSyncingAccountsState] = useState<Record<string, boolean>>({});
   const socketRef = useRef<WebSocket | null>(null);
   const productionApiBaseUrl = "https://backend-production-b29e.up.railway.app";
   const productionWsUrl = "wss://backend-production-b29e.up.railway.app/ws/chat";
@@ -475,6 +605,65 @@ export default function Home() {
   }, [compareSort, selectedCompareIngredient, supplierRows]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const storedSettings = window.localStorage.getItem(GMAIL_SETTINGS_STORAGE_KEY);
+    if (storedSettings) {
+      try {
+        setGmailSettings({ ...defaultGmailSettings, ...(JSON.parse(storedSettings) as Partial<GmailSettings>) });
+      } catch {
+        window.localStorage.removeItem(GMAIL_SETTINGS_STORAGE_KEY);
+      }
+    }
+
+    // Get active Supabase session and set active user
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
+        setAuthUser({
+          email: u.email || "",
+          name: name,
+          role: "Admin"
+        });
+        setLoginEmail(u.email || "");
+        setLoginName(name);
+      } else {
+        setAuthUser(null);
+        router.push("/login");
+      }
+      setAuthChecked(true);
+    });
+
+    // Listen to changes in auth state (e.g. sign outs)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        const u = session.user;
+        const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
+        setAuthUser({
+          email: u.email || "",
+          name: name,
+          role: "Admin"
+        });
+        setLoginEmail(u.email || "");
+        setLoginName(name);
+      } else {
+        setAuthUser(null);
+        router.push("/login");
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [router]);
+
+  useEffect(() => {
+    if (!authUser || typeof window === "undefined") return;
+    window.localStorage.setItem(GMAIL_SETTINGS_STORAGE_KEY, JSON.stringify(gmailSettings));
+  }, [authUser, gmailSettings]);
+
+  useEffect(() => {
     if (!selectedInboxSupplier && inboxThreads[0]) {
       setSelectedInboxSupplier(inboxThreads[0].supplier_name);
     }
@@ -492,6 +681,11 @@ export default function Home() {
     let cancelled = false;
 
     async function loadSupplierRows() {
+      if (!authUser) {
+        setSupplierLoading(false);
+        return;
+      }
+
       setSupplierLoading(true);
       setSupplierError(null);
 
@@ -541,7 +735,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, authUser, dataRefreshKey]);
 
   function ensureSocket() {
     if (socketRef.current?.readyState === WebSocket.OPEN) return socketRef.current;
@@ -576,6 +770,320 @@ export default function Home() {
     }
   }
 
+  function gmailPayload() {
+    return {
+      email: gmailSettings.email.trim(),
+      app_password: gmailSettings.appPassword.trim(),
+      mailbox: gmailSettings.mailbox.trim() || "INBOX",
+    };
+  }
+
+  function validateGmailSettings() {
+    const payload = gmailPayload();
+    if (!payload.email || !payload.app_password) {
+      setSettingsStatus("Enter Gmail address and app password first.");
+      return null;
+    }
+    return payload;
+  }
+
+  function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const email = loginEmail.trim();
+    const name = loginName.trim() || email.split("@")[0] || "User";
+
+    if (!/^[^@\s]+@gmail\.com$/i.test(email)) {
+      setLoginError("Use a Gmail address to continue.");
+      return;
+    }
+
+    const user: AuthUser = { email, name, role: "Admin" };
+    setAuthUser(user);
+    setLoginError("");
+    setGmailSettings((current) => ({ ...current, email: current.email || email }));
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+    }
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.localStorage.removeItem(GMAIL_SETTINGS_STORAGE_KEY);
+      // Clear cookie
+      document.cookie = `sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax; Secure`;
+    }
+    socketRef.current?.close();
+    socketRef.current = null;
+    setAuthUser(null);
+    setGmailSettings(defaultGmailSettings);
+    setSettingsStatus("");
+    setActiveTab("dashboard");
+    router.push("/login");
+  }
+
+  // --- Premium Settings Integration Helpers ---
+  async function authFetch(url: string, options: RequestInit = {}) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    const headers = {
+      ...options.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    return fetch(url, { ...options, headers });
+  }
+
+  async function fetchConnectedAccounts() {
+    setLoadingAccounts(true);
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts`);
+      if (res.ok) {
+        const data = await res.json();
+        setConnectedAccounts(data);
+      }
+    } catch (error) {
+      console.error("Error loading email accounts:", error);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  }
+
+  async function fetchEmailSyncSettings() {
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts/sync-settings`);
+      if (res.ok) {
+        const data = await res.json();
+        setSyncSettings(data);
+      }
+    } catch (error) {
+      console.error("Error loading sync settings:", error);
+    }
+  }
+
+  async function saveEmailSyncSettings(updatedSettings: Partial<EmailSyncSetting>) {
+    setSavingSyncSettings(true);
+    const merged = { ...syncSettings, ...updatedSettings };
+    setSyncSettings(merged);
+    
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts/sync-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          poll_interval_minutes: Number(merged.poll_interval_minutes),
+          auto_extract_catalog: Boolean(merged.auto_extract_catalog),
+          notify_on_new_catalog: Boolean(merged.notify_on_new_catalog),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncSettings(data);
+        setSettingsSaveFeedback(true);
+        setTimeout(() => setSettingsSaveFeedback(false), 2500);
+      }
+    } catch (error) {
+      console.error("Error saving sync settings:", error);
+    } finally {
+      setSavingSyncSettings(false);
+    }
+  }
+
+  async function testConnection() {
+    if (!newAccountEmail.trim() || !newAccountPassword.trim()) {
+      setTestResult({ success: false, message: "Email and app password are required to test connection." });
+      return;
+    }
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: newAccountProvider,
+          email_address: newAccountEmail.trim(),
+          imap_host: newAccountImapHost,
+          imap_port: Number(newAccountImapPort),
+          password: newAccountPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestResult({ success: true, message: data.message || "Connected successfully! App credentials passed verification." });
+      } else {
+        setTestResult({ success: false, message: data.detail || data.message || "Verification failed. Check IMAP settings and App Password." });
+      }
+    } catch (error) {
+      setTestResult({ success: false, message: "Server connection error. Please ensure backend is running." });
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+  async function saveAccount() {
+    if (!newAccountEmail.trim() || (!editingAccountId && !newAccountPassword.trim())) {
+      return;
+    }
+    setSavingAccount(true);
+    try {
+      const payload = {
+        provider: newAccountProvider,
+        email_address: newAccountEmail.trim(),
+        imap_host: newAccountImapHost,
+        imap_port: Number(newAccountImapPort),
+        password: newAccountPassword || undefined,
+        filters: {
+          require_attachment: filterRequireAttachment,
+          sender_keywords: filterSenderKeywords.trim() || null,
+          subject_keywords: filterSubjectKeywords.trim() || null,
+          skip_promotions_tab: filterSkipPromotions,
+        }
+      };
+
+      const url = editingAccountId 
+        ? `${apiBaseUrl}/api/email-accounts/${editingAccountId}` 
+        : `${apiBaseUrl}/api/email-accounts`;
+      
+      const method = editingAccountId ? "PUT" : "POST";
+      
+      const res = await authFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      
+      if (res.ok) {
+        await fetchConnectedAccounts();
+        resetAddAccountForm();
+        setDataRefreshKey((current) => current + 1);
+      } else {
+        const data = await res.json();
+        alert(data.detail || "Failed to save email account credentials.");
+      }
+    } catch (error) {
+      console.error("Error saving email account:", error);
+    } finally {
+      setSavingAccount(false);
+    }
+  }
+
+  async function deleteAccount(id: string) {
+    if (!confirm("Are you sure you want to disconnect this inbox? MediCORE will completely stop polling and remove all configurations.")) {
+      return;
+    }
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts/${id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        await fetchConnectedAccounts();
+        setDataRefreshKey((current) => current + 1);
+      } else {
+        alert("Failed to delete account from server.");
+      }
+    } catch (error) {
+      console.error("Error disconnecting account:", error);
+    }
+  }
+
+  async function triggerAccountSync(id: string) {
+    setSyncingAccountsState(prev => ({ ...prev, [id]: true }));
+    try {
+      const res = await authFetch(`${apiBaseUrl}/api/email-accounts/${id}/sync`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setTimeout(async () => {
+          await fetchConnectedAccounts();
+          setSyncingAccountsState(prev => ({ ...prev, [id]: false }));
+          setDataRefreshKey((current) => current + 1);
+        }, 1500);
+      } else {
+        setSyncingAccountsState(prev => ({ ...prev, [id]: false }));
+      }
+    } catch (error) {
+      console.error("Error triggering sync:", error);
+      setSyncingAccountsState(prev => ({ ...prev, [id]: false }));
+    }
+  }
+
+  function editAccount(acc: ConnectedEmailAccount) {
+    setEditingAccountId(acc.id);
+    setNewAccountProvider(acc.provider);
+    setNewAccountEmail(acc.email_address);
+    setNewAccountPassword(""); 
+    setNewAccountImapHost(acc.imap_host);
+    setNewAccountImapPort(acc.imap_port);
+    
+    const filter = acc.filters?.[0];
+    if (filter) {
+      setFilterRequireAttachment(filter.require_attachment);
+      setFilterSenderKeywords(filter.sender_keywords || "");
+      setFilterSubjectKeywords(filter.subject_keywords || "");
+      setFilterSkipPromotions(filter.skip_promotions_tab);
+    } else {
+      setFilterRequireAttachment(false);
+      setFilterSenderKeywords("");
+      setFilterSubjectKeywords("");
+      setFilterSkipPromotions(false);
+    }
+    
+    setSetupStep(3); 
+    setAddAccountExpanded(true);
+    setTestResult({ success: true, message: "Testing is not required to update filters or provider details. Type a new app password if you want to update credentials." });
+  }
+
+  function resetAddAccountForm() {
+    setAddAccountExpanded(false);
+    setEditingAccountId(null);
+    setSetupStep(1);
+    setNewAccountProvider("Gmail");
+    setNewAccountEmail("");
+    setNewAccountPassword("");
+    setNewAccountImapHost("imap.gmail.com");
+    setNewAccountImapPort(993);
+    setFilterRequireAttachment(false);
+    setFilterSenderKeywords("");
+    setFilterSubjectKeywords("");
+    setFilterSkipPromotions(false);
+    setTestResult(null);
+  }
+
+  useEffect(() => {
+    if (authUser && activeTab === "settings") {
+      fetchConnectedAccounts();
+      fetchEmailSyncSettings();
+    }
+  }, [authUser, activeTab]);
+
+  if (!authChecked) {
+    return <main className="auth-page"><div className="auth-card"><h1>MediCORE</h1><p>Loading workspace...</p></div></main>;
+  }
+
+  if (!authUser) {
+    return (
+      <main className="auth-page">
+        <form className="auth-card" onSubmit={handleLogin}>
+          <p className="auth-kicker">MediCORE</p>
+          <h1>Sign in with Gmail</h1>
+          <p>Use your Gmail address to start. Gmail reading is configured after login using an app password.</p>
+          <label>
+            <span>Gmail address</span>
+            <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} placeholder="you@gmail.com" autoComplete="email" />
+          </label>
+          <label>
+            <span>Name</span>
+            <input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="Your name" autoComplete="name" />
+          </label>
+          {loginError && <div className="auth-error">{loginError}</div>}
+          <button type="submit">Continue</button>
+        </form>
+      </main>
+    );
+  }
+
   return (
     <>
       {/* Navbar */}
@@ -585,10 +1093,10 @@ export default function Home() {
         </div>
         <div className="navbar-actions">
           <div className="user-menu" onClick={() => setUserMenuOpen(!userMenuOpen)}>
-            <div className="user-avatar">PS</div>
+            <div className="user-avatar">{userInitials(authUser.name, authUser.email)}</div>
             <div className="user-info">
-              <p>Prisik</p>
-              <span>Admin</span>
+              <p>{authUser.name}</p>
+              <span>{authUser.role}</span>
             </div>
             <ChevronDown size={16} />
           </div>
@@ -673,7 +1181,10 @@ export default function Home() {
             <div className="sidebar-section-title">Settings</div>
             <ul className="sidebar-nav">
               <li className="sidebar-nav-item">
-                <button className="sidebar-nav-link">
+                <button
+                  className={`sidebar-nav-link ${activeTab === "settings" ? "active" : ""}`}
+                  onClick={() => setActiveTab("settings")}
+                >
                   <Settings size={18} />
                   <span>Settings</span>
                 </button>
@@ -681,7 +1192,7 @@ export default function Home() {
             </ul>
           </div>
           <div className="sidebar-footer">
-            <button>
+            <button type="button" onClick={handleLogout}>
               <LogOut size={16} />
               <span>Logout</span>
             </button>
@@ -773,7 +1284,7 @@ export default function Home() {
                           <span>{deal.best.supplier_name} - {formatQuantity(deal.best.available_qty)} {deal.best.unit}</span>
                         </div>
                         <div className="deal-price">
-                          <strong>{deal.best.currency} {deal.best.price_per_unit.toFixed(2)}/{deal.best.unit}</strong>
+                          <strong>{formatMoney(deal.best.price_per_unit, deal.best.currency)}/{deal.best.unit}</strong>
                           <small>{deal.savingPercent > 0 ? `Save ${deal.savingPercent.toFixed(0)}%` : "Best listed"}</small>
                         </div>
                       </article>
@@ -880,7 +1391,7 @@ export default function Home() {
                                   <tr key={`${item.supplier_name}-${item.ingredient_name}-${index}`}>
                                     <td>{item.ingredient_name}</td>
                                     <td>{item.unit}</td>
-                                    <td>{item.currency} {item.price_per_unit.toFixed(2)}</td>
+                                    <td>{formatMoney(item.price_per_unit, item.currency)}</td>
                                     <td>{item.available_qty.toLocaleString()}</td>
                                     <td>{item.price_per_unit === bestPrice ? "Best price" : ""}</td>
                                   </tr>
@@ -962,7 +1473,7 @@ export default function Home() {
                             <tr key={`${item.supplier_name}-${item.ingredient_name}-${index}`}>
                               <td>{item.ingredient_name}</td>
                               <td>{item.pack_size || item.unit}</td>
-                              <td>{item.currency} {item.price_per_unit.toFixed(2)}</td>
+                              <td>{formatMoney(item.price_per_unit, item.currency)}</td>
                               <td>{formatQuantity(item.available_qty)} {item.unit}</td>
                               <td>{formatShortDate(item.valid_until)}</td>
                               <td><span className={`catalog-status ${status === "Low stock" ? "warning" : status === "Best price" ? "best" : ""}`}>{status}</span></td>
@@ -1066,7 +1577,7 @@ export default function Home() {
 
                         <div className="compare-stat-grid">
                           <div>
-                            <strong>{row.currency} {row.price_per_unit.toFixed(2)}</strong>
+                            <strong>{formatMoney(row.price_per_unit, row.currency)}</strong>
                             <span>Per {row.unit}</span>
                           </div>
                           <div>
@@ -1130,7 +1641,7 @@ export default function Home() {
                             <tr key={`${row.supplier_name}-${row.ingredient_name}-table`}>
                               <td>{index + 4}</td>
                               <td>{row.supplier_name}</td>
-                              <td>{row.currency} {row.price_per_unit.toFixed(2)}</td>
+                              <td>{formatMoney(row.price_per_unit, row.currency)}</td>
                               <td>{formatQuantity(row.available_qty)} {row.unit}</td>
                               <td>{formatShortDate(row.valid_until)}</td>
                               <td>{row.overallScore}</td>
@@ -1170,7 +1681,7 @@ export default function Home() {
                         <tr key={`${row.supplier_name}-${row.ingredient_name}-${index}`}>
                           <td>{row.supplier_name}</td>
                           <td>{row.normalized_name || row.ingredient_name}</td>
-                          <td>{row.currency} {row.price_per_unit.toFixed(2)}</td>
+                          <td>{formatMoney(row.price_per_unit, row.currency)}</td>
                           <td>{row.available_qty.toLocaleString()} {row.unit}</td>
                         </tr>
                       ))}
@@ -1213,7 +1724,7 @@ export default function Home() {
                           <tr key={index}>
                             <td>{String(row.supplier_name ?? "-")}</td>
                             <td>{String(row.normalized_name ?? row.ingredient_name ?? "-")}</td>
-                            <td>{String(row.price_per_unit ?? "-")} {String(row.currency ?? "")}</td>
+                            <td>{typeof row.price_per_unit === "number" ? formatMoney(row.price_per_unit, String(row.currency ?? "INR")) : "-"}</td>
                             <td>{String(row.available_qty ?? "-")} {String(row.unit ?? "")}</td>
                             <td>{String(row.reliability_score ?? "-")}</td>
                           </tr>
@@ -1224,6 +1735,705 @@ export default function Home() {
                 </div>
               </section>
             </>
+          )}
+
+
+          {activeTab === "settings" && (
+            <div className="settings-container" style={{
+              display: "grid",
+              gridTemplateColumns: "240px 1fr",
+              gap: "24px",
+              minHeight: "calc(100vh - var(--navbar-height) - 48px)",
+              padding: "24px 0",
+              alignItems: "stretch",
+            }}>
+              {/* Left Sidebar Sub-Navigation */}
+              <aside className="settings-sidebar" style={{
+                background: "rgba(255, 255, 255, 0.75)",
+                backdropFilter: "blur(12px)",
+                border: "1px solid var(--line)",
+                borderRadius: "16px",
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                boxShadow: "0 4px 20px rgba(0, 0, 0, 0.02)",
+                height: "fit-content",
+              }}>
+                <div style={{ padding: "0 12px 16px 12px", borderBottom: "1px solid var(--line)", marginBottom: "8px" }}>
+                  <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "var(--accent)" }}>MediCORE</h3>
+                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>Workspace Settings</span>
+                </div>
+                
+                {[
+                  { id: "profile", label: "Profile", icon: <Users size={16} /> },
+                  { id: "email", label: "Email Access", icon: <Inbox size={16} /> },
+                  { id: "notifications", label: "Notifications", icon: <span style={{ display: "inline-flex" }}>🔔</span> },
+                  { id: "security", label: "Security", icon: <span style={{ display: "inline-flex" }}>🛡️</span> },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setSettingsActiveTab(tab.id as any)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      width: "100%",
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      border: "none",
+                      background: settingsActiveTab === tab.id ? "rgba(15, 122, 95, 0.08)" : "transparent",
+                      color: settingsActiveTab === tab.id ? "var(--accent)" : "var(--ink)",
+                      fontWeight: settingsActiveTab === tab.id ? 600 : 500,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "all 0.2s ease",
+                    }}
+                    className="sidebar-tab-btn"
+                  >
+                    {tab.icon}
+                    <span>{tab.label}</span>
+                    {settingsActiveTab === tab.id && (
+                      <span style={{ marginLeft: "auto", width: "4px", height: "16px", borderRadius: "2px", background: "var(--accent)" }}></span>
+                    )}
+                  </button>
+                ))}
+              </aside>
+
+              {/* Right Content Pane */}
+              <main className="settings-content" style={{
+                background: "rgba(255, 255, 255, 0.8)",
+                backdropFilter: "blur(12px)",
+                border: "1px solid var(--line)",
+                borderRadius: "16px",
+                padding: "32px",
+                boxShadow: "0 8px 32px rgba(0, 0, 0, 0.03)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "24px",
+                minHeight: "500px",
+              }}>
+                {/* 1. PROFILE TAB */}
+                {settingsActiveTab === "profile" && authUser && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                    <div>
+                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Profile Configuration</h2>
+                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Manage your administrative details and account profile.</p>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "20px", padding: "20px", background: "rgba(0, 0, 0, 0.015)", borderRadius: "12px", border: "1px solid var(--line)" }}>
+                      <div className="user-avatar" style={{ width: "64px", height: "64px", fontSize: "24px" }}>
+                        {userInitials(authUser.name, authUser.email)}
+                      </div>
+                      <div>
+                        <h3 style={{ margin: "0 0 4px 0", fontSize: "18px", fontWeight: 600 }}>{authUser.name}</h3>
+                        <span style={{ fontSize: "13px", color: "var(--muted)" }}>{authUser.email}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                      <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px" }}>
+                        <span style={{ fontSize: "12px", color: "var(--muted)", display: "block", marginBottom: "4px" }}>Role</span>
+                        <strong style={{ fontSize: "15px", color: "var(--ink)" }}>{authUser.role}</strong>
+                      </div>
+                      <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px" }}>
+                        <span style={{ fontSize: "12px", color: "var(--muted)", display: "block", marginBottom: "4px" }}>Organisation</span>
+                        <strong style={{ fontSize: "15px", color: "var(--ink)" }}>MediCORE Central</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. EMAIL ACCESS TAB */}
+                {settingsActiveTab === "email" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+                    <div>
+                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Email Access</h2>
+                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Manage connected mailboxes and configure automated catalog polling.</p>
+                    </div>
+
+                    {/* Section 1: Connected Accounts */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                      <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Connected Accounts</h3>
+                      
+                      {loadingAccounts ? (
+                        <div style={{ padding: "32px", textAlign: "center", color: "var(--muted)" }}>Loading linked inboxes...</div>
+                      ) : connectedAccounts.length === 0 ? (
+                        <div style={{
+                          padding: "48px 32px",
+                          border: "2px dashed var(--line)",
+                          borderRadius: "12px",
+                          textAlign: "center",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "12px",
+                        }}>
+                          <span style={{ fontSize: "32px" }}>📨</span>
+                          <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>No connected accounts yet</h4>
+                          <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", maxWidth: "320px" }}>
+                            Link a Gmail inbox with an App Password to begin pulling catalogue PDFs automatically.
+                          </p>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {connectedAccounts.map((account) => (
+                            <div
+                              key={account.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "16px 20px",
+                                background: "rgba(255, 255, 255, 0.5)",
+                                border: "1px solid var(--line)",
+                                borderRadius: "12px",
+                                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.01)",
+                                transition: "all 0.2s ease",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                                <div style={{
+                                  width: "40px",
+                                  height: "40px",
+                                  borderRadius: "8px",
+                                  background: "rgba(15, 122, 95, 0.06)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "18px",
+                                  fontWeight: 700,
+                                  color: "var(--accent)"
+                                }}>
+                                  G
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                    <span style={{ fontWeight: 600, fontSize: "14px" }}>{account.email_address}</span>
+                                    <span style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "10px", background: "#f0f4f2", color: "var(--muted)" }}>
+                                      {account.provider}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                    <div style={{
+                                      width: "8px",
+                                      height: "8px",
+                                      borderRadius: "50%",
+                                      background: account.sync_status === "error" ? "#e53e3e" : "#319795",
+                                      boxShadow: account.sync_status === "error" ? "0 0 8px rgba(229, 62, 62, 0.6)" : "0 0 8px rgba(49, 151, 149, 0.6)"
+                                    }}></div>
+                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                                      {account.sync_status === "error" 
+                                        ? `Sync Fail: ${account.sync_error_msg || "IMAP login failure"}` 
+                                        : `Status OK — Synced ${formatRelativeTime(account.last_synced_at)}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => triggerAccountSync(account.id)}
+                                  disabled={syncingAccountsState[account.id]}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    borderRadius: "6px",
+                                    border: "1px solid var(--line)",
+                                    background: "#fff",
+                                    cursor: "pointer",
+                                    color: "var(--accent)",
+                                  }}
+                                >
+                                  {syncingAccountsState[account.id] ? "Syncing..." : "Sync Now"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => editAccount(account)}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    borderRadius: "6px",
+                                    border: "1px solid var(--line)",
+                                    background: "#fff",
+                                    cursor: "pointer",
+                                    color: "var(--ink)",
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteAccount(account.id)}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    borderRadius: "6px",
+                                    border: "1px solid rgba(229, 62, 62, 0.1)",
+                                    background: "rgba(229, 62, 62, 0.05)",
+                                    cursor: "pointer",
+                                    color: "#e53e3e",
+                                  }}
+                                >
+                                  Disconnect
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 2: Add Email Account */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                      {!addAccountExpanded ? (
+                        <button
+                          type="button"
+                          onClick={() => setAddAccountExpanded(true)}
+                          style={{
+                            padding: "14px 20px",
+                            background: "rgba(15, 122, 95, 0.08)",
+                            color: "var(--accent)",
+                            border: "none",
+                            borderRadius: "10px",
+                            fontWeight: 600,
+                            fontSize: "14px",
+                            cursor: "pointer",
+                            textAlign: "center",
+                            width: "fit-content",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            transition: "all 0.2s ease"
+                          }}
+                        >
+                          <span>➕</span> Add email account
+                        </button>
+                      ) : (
+                        <div style={{
+                          padding: "24px",
+                          border: "1px solid var(--line)",
+                          borderRadius: "12px",
+                          background: "rgba(255, 255, 255, 0.4)",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "20px",
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 700 }}>
+                              {editingAccountId ? "Edit Connected Inbox" : "Link New Inbox"}
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={resetAddAccountForm}
+                              style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                            >
+                              ✕ Cancel
+                            </button>
+                          </div>
+
+                          {/* Setup Steps indicator */}
+                          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                            {[1, 2, 3, 4].map((step) => (
+                              <div
+                                key={step}
+                                onClick={() => step <= setupStep && setSetupStep(step)}
+                                style={{
+                                  flex: 1,
+                                  height: "6px",
+                                  borderRadius: "3px",
+                                  background: step <= setupStep ? "var(--accent)" : "var(--line)",
+                                  cursor: step <= setupStep ? "pointer" : "default",
+                                  transition: "background 0.3s ease"
+                                }}
+                              />
+                            ))}
+                          </div>
+
+                          {/* STEP 1: Provider Selection */}
+                          {setupStep === 1 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 1: Select Email Provider</span>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "12px" }}>
+                                <div
+                                  onClick={() => {
+                                    setNewAccountProvider("Gmail");
+                                    setNewAccountImapHost("imap.gmail.com");
+                                    setNewAccountImapPort(993);
+                                    setSetupStep(2);
+                                  }}
+                                  style={{
+                                    padding: "20px",
+                                    borderRadius: "10px",
+                                    border: "2px solid var(--accent)",
+                                    background: "rgba(15, 122, 95, 0.04)",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "16px",
+                                  }}
+                                >
+                                  <span style={{ fontSize: "28px" }}>📧</span>
+                                  <div>
+                                    <strong style={{ display: "block", fontSize: "15px" }}>Gmail</strong>
+                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Poll securely using custom credentials & App Passwords.</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* STEP 2: Plain inline guide */}
+                          {setupStep === 2 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 2: Security How-To Guide</span>
+                              
+                              <div style={{
+                                padding: "16px",
+                                background: "#f0f6f4",
+                                borderLeft: "4px solid var(--accent)",
+                                borderRadius: "8px",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "10px",
+                              }}>
+                                <h5 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "var(--accent)" }}>
+                                  How to Link a Gmail Inbox
+                                </h5>
+                                <ol style={{ margin: 0, paddingLeft: "16px", fontSize: "13px", color: "var(--ink)", display: "flex", flexDirection: "column", gap: "6px" }}>
+                                  <li>Ensure <strong>IMAP is Enabled</strong> under your Gmail Settings - Forwarding and POP/IMAP.</li>
+                                  <li>Turn on <strong>2-Step Verification</strong> in your Google Account Security settings.</li>
+                                  <li>Generate a <strong>16-character App Password</strong> specifically for "MediCORE".</li>
+                                  <li>Paste the App Password in the next step (do NOT use your raw Google Login password!).</li>
+                                </ol>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setSetupStep(3)}
+                                style={{
+                                  padding: "10px 16px",
+                                  background: "var(--accent)",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: "6px",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  alignSelf: "flex-end"
+                                }}
+                              >
+                                Continue to Credentials
+                              </button>
+                            </div>
+                          )}
+
+                          {/* STEP 3: Credentials Form */}
+                          {setupStep === 3 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 3: Setup Credentials & Test Connection</span>
+                              
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>Email Address</span>
+                                  <input
+                                    type="email"
+                                    value={newAccountEmail}
+                                    onChange={(e) => setNewAccountEmail(e.target.value)}
+                                    placeholder="your-business-inbox@gmail.com"
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                  />
+                                </label>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>App Password</span>
+                                  <input
+                                    type="password"
+                                    value={newAccountPassword}
+                                    onChange={(e) => setNewAccountPassword(e.target.value)}
+                                    placeholder={editingAccountId ? "•••••••••••••••• (Leave blank to keep current)" : "16-character app password"}
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                    autoComplete="off"
+                                  />
+                                </label>
+                              </div>
+
+                              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px" }}>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>IMAP Server Host</span>
+                                  <input
+                                    type="text"
+                                    value={newAccountImapHost}
+                                    onChange={(e) => setNewAccountImapHost(e.target.value)}
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                  />
+                                </label>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 600 }}>IMAP Port</span>
+                                  <input
+                                    type="number"
+                                    value={newAccountImapPort}
+                                    onChange={(e) => setNewAccountImapPort(Number(e.target.value))}
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                  />
+                                </label>
+                              </div>
+
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
+                                <button
+                                  type="button"
+                                  onClick={testConnection}
+                                  disabled={testingConnection}
+                                  style={{
+                                    padding: "10px 16px",
+                                    background: "#fff",
+                                    border: "1px solid var(--accent)",
+                                    color: "var(--accent)",
+                                    borderRadius: "6px",
+                                    fontWeight: 600,
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  {testingConnection ? "Verifying Credentials..." : "Test Connection"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSetupStep(4)}
+                                  disabled={!testResult?.success}
+                                  style={{
+                                    padding: "10px 16px",
+                                    background: testResult?.success ? "var(--accent)" : "#f0f2f0",
+                                    color: testResult?.success ? "#fff" : "var(--muted)",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    fontWeight: 600,
+                                    cursor: testResult?.success ? "pointer" : "default"
+                                  }}
+                                >
+                                  Configure Filters ➔
+                                </button>
+                              </div>
+
+                              {testResult && (
+                                <div style={{
+                                  padding: "12px",
+                                  borderRadius: "8px",
+                                  fontSize: "13px",
+                                  background: testResult.success ? "rgba(49, 151, 149, 0.08)" : "rgba(229, 62, 62, 0.08)",
+                                  border: testResult.success ? "1px solid rgba(49, 151, 149, 0.2)" : "1px solid rgba(229, 62, 62, 0.2)",
+                                  color: testResult.success ? "#2c7a7b" : "#c53030",
+                                }}>
+                                  {testResult.message}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* STEP 4: Filters Selection */}
+                          {setupStep === 4 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 4: Configure Email Ingestion Filters</span>
+                              
+                              <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "16px", background: "rgba(0, 0, 0, 0.01)", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                                <label style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: "12px", cursor: "pointer" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filterRequireAttachment}
+                                    onChange={(e) => setFilterRequireAttachment(e.target.checked)}
+                                    style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                                  />
+                                  <div>
+                                    <strong style={{ display: "block", fontSize: "14px" }}>Require PDF Attachment</strong>
+                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Only process emails containing PDF catalogue attachments.</span>
+                                  </div>
+                                </label>
+
+                                <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                                <label style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: "12px", cursor: "pointer" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filterSkipPromotions}
+                                    onChange={(e) => setFilterSkipPromotions(e.target.checked)}
+                                    style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                                  />
+                                  <div>
+                                    <strong style={{ display: "block", fontSize: "14px" }}>Skip Gmail Promotions & Bulk Newsletters</strong>
+                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Avoid processing commercial bulk newsletters and marketing emails.</span>
+                                  </div>
+                                </label>
+
+                                <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <strong style={{ fontSize: "14px" }}>Sender Keyword Whitelist</strong>
+                                  <span style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>Comma-separated keywords (e.g. <i>supplier, pharmacy</i>). Only pull from matching senders.</span>
+                                  <input
+                                    type="text"
+                                    value={filterSenderKeywords}
+                                    onChange={(e) => setFilterSenderKeywords(e.target.value)}
+                                    placeholder="Enter whitelist keywords..."
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                  />
+                                </label>
+
+                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <strong style={{ fontSize: "14px" }}>Subject Keyword Whitelist</strong>
+                                  <span style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>Comma-separated keywords (e.g. <i>catalog, price, ingredients</i>). Only pull matching emails.</span>
+                                  <input
+                                    type="text"
+                                    value={filterSubjectKeywords}
+                                    onChange={(e) => setFilterSubjectKeywords(e.target.value)}
+                                    placeholder="Enter subject keywords..."
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                  />
+                                </label>
+                              </div>
+
+                              <div style={{ display: "flex", justifyItems: "center", gap: "12px", marginLeft: "auto" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setSetupStep(3)}
+                                  style={{
+                                    padding: "10px 16px",
+                                    background: "#fff",
+                                    border: "1px solid var(--line)",
+                                    borderRadius: "6px",
+                                    fontWeight: 600,
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  ⬅ Back
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={saveAccount}
+                                  disabled={savingAccount}
+                                  style={{
+                                    padding: "10px 24px",
+                                    background: "var(--accent)",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    fontWeight: 700,
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  {savingAccount ? "Saving inbox..." : "Save and Poll Inbox"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 3: Sync Settings Card */}
+                    <div style={{
+                      padding: "24px",
+                      borderRadius: "12px",
+                      background: "rgba(255, 255, 255, 0.4)",
+                      border: "1px solid var(--line)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "20px",
+                      marginTop: "16px"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>General Polling Settings</h4>
+                          <p style={{ margin: "4px 0 0 0", color: "var(--muted)", fontSize: "13px" }}>Set global cron behaviors for attachment processing.</p>
+                        </div>
+                        {settingsSaveFeedback && (
+                          <span style={{ fontSize: "12px", background: "rgba(49, 151, 149, 0.1)", color: "#2c7a7b", padding: "4px 10px", borderRadius: "12px", fontWeight: 600 }}>
+                            Saved
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "16px" }}>
+                        <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <span style={{ fontSize: "13px", fontWeight: 600 }}>Global Polling Interval</span>
+                          <select
+                            value={syncSettings.poll_interval_minutes}
+                            onChange={(e) => saveEmailSyncSettings({ poll_interval_minutes: Number(e.target.value) })}
+                            style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff", cursor: "pointer" }}
+                          >
+                            <option value={5}>Every 5 minutes</option>
+                            <option value={10}>Every 10 minutes</option>
+                            <option value={15}>Every 15 minutes</option>
+                            <option value={30}>Every 30 minutes</option>
+                            <option value={60}>Every hour</option>
+                          </select>
+                        </label>
+
+                        <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                        <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={syncSettings.auto_extract_catalog}
+                            onChange={(e) => saveEmailSyncSettings({ auto_extract_catalog: e.target.checked })}
+                            style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                          />
+                          <div>
+                            <strong style={{ display: "block", fontSize: "14px" }}>Auto-Extract PDF Catalogue Items</strong>
+                            <span style={{ fontSize: "12px", color: "var(--muted)" }}>Automatically normalize and extract inventory sheets upon parsing.</span>
+                          </div>
+                        </label>
+
+                        <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                        <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={syncSettings.notify_on_new_catalog}
+                            onChange={(e) => saveEmailSyncSettings({ notify_on_new_catalog: e.target.checked })}
+                            style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                          />
+                          <div>
+                            <strong style={{ display: "block", fontSize: "14px" }}>Push Notifications on New Catalogue Extraction</strong>
+                            <span style={{ fontSize: "12px", color: "var(--muted)" }}>Notify workspace users in real-time as soon as products match suppliers.</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. NOTIFICATIONS TAB */}
+                {settingsActiveTab === "notifications" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <div>
+                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Notifications</h2>
+                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Configure notification options for extracted inventories.</p>
+                    </div>
+                    <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px", background: "rgba(0, 0, 0, 0.01)" }}>
+                      <span style={{ fontSize: "14px", color: "var(--muted)" }}>Workspace alerts are currently routed to dashboard banner feed.</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. SECURITY TAB */}
+                {settingsActiveTab === "security" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <div>
+                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Security & Encryption</h2>
+                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Manage credentials encryption and symmetrical vaults.</p>
+                    </div>
+                    <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px", background: "rgba(0, 0, 0, 0.01)", display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <strong style={{ fontSize: "14px" }}>AES-256 Symmetrical Vault Encryption</strong>
+                      <span style={{ fontSize: "13px", color: "var(--muted)" }}>
+                        All App Passwords linked inside MediCORE are encrypted server-side using the secure 32-byte derived service-role key before hitting PostgreSQL tables. Decryption is isolated only to Celery worker polling execution scopes.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </main>
+            </div>
           )}
 
           {activeTab === "suppliers" && (
@@ -1338,6 +2548,7 @@ export default function Home() {
     </>
   );
 }
+
 
 
 
