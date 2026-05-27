@@ -106,5 +106,9 @@ class EmailSyncSetting(Base):
     poll_interval_minutes: Mapped[int] = mapped_column(Integer, default=3)
     auto_extract_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_on_new_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
+    ingestion_approach: Mapped[str] = mapped_column(Text, default="approach_2")
+    trusted_suppliers: Mapped[str] = mapped_column(Text, default="")
+    keyword_filters: Mapped[str] = mapped_column(Text, default="catalog, catalogue, price, offer, quote")
+    pending_approvals: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -79,6 +79,10 @@ class EmailSyncSettingResponse(BaseModel):
     poll_interval_minutes: int
     auto_extract_catalog: bool
     notify_on_new_catalog: bool
+    ingestion_approach: str
+    trusted_suppliers: str
+    keyword_filters: str
+    pending_approvals: str
 
     class Config:
         from_attributes = True
@@ -87,6 +91,10 @@ class EmailSyncSettingUpdate(BaseModel):
     poll_interval_minutes: int
     auto_extract_catalog: bool
     notify_on_new_catalog: bool
+    ingestion_approach: str
+    trusted_suppliers: str
+    keyword_filters: str
+    pending_approvals: str
 
 # --- Helpers ---
 
@@ -469,7 +477,11 @@ def get_sync_settings(
                 user_id=user_uuid,
                 poll_interval_minutes=15,  # Default to 15 minutes
                 auto_extract_catalog=True,
-                notify_on_new_catalog=True
+                notify_on_new_catalog=True,
+                ingestion_approach="approach_2",
+                trusted_suppliers="",
+                keyword_filters="catalog, catalogue, price, offer, quote",
+                pending_approvals=""
             )
             db.add(settings_row)
             db.commit()
@@ -494,13 +506,23 @@ def update_sync_settings(
     from backend.app.models import EmailSyncSetting
     settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
     if not settings_row:
-        settings_row = EmailSyncSetting(user_id=user_uuid)
+        settings_row = EmailSyncSetting(
+            user_id=user_uuid,
+            ingestion_approach="approach_2",
+            trusted_suppliers="",
+            keyword_filters="catalog, catalogue, price, offer, quote",
+            pending_approvals=""
+        )
         db.add(settings_row)
         
     try:
         settings_row.poll_interval_minutes = request.poll_interval_minutes
         settings_row.auto_extract_catalog = request.auto_extract_catalog
         settings_row.notify_on_new_catalog = request.notify_on_new_catalog
+        settings_row.ingestion_approach = request.ingestion_approach
+        settings_row.trusted_suppliers = request.trusted_suppliers
+        settings_row.keyword_filters = request.keyword_filters
+        settings_row.pending_approvals = request.pending_approvals
         db.commit()
         db.refresh(settings_row)
         return settings_row

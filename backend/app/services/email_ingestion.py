@@ -372,19 +372,34 @@ class EmailIngestionService:
             
             with client:
                 client.login(account.email_address, password)
-                client.select("INBOX")
                 
-                # Fetch filters
+                # Fetch filters and global sync settings
                 active_filter = self.db.query(EmailFilter).filter(EmailFilter.email_account_id == account.id).first()
+                from backend.app.models import EmailSyncSetting
+                sync_setting = self.db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == account.user_id).first()
+                approach = sync_setting.ingestion_approach if sync_setting else "approach_2"
+                
+                mailbox = "INBOX"
+                if approach == "approach_1":
+                    mailbox = "suppliers"
+                
+                try:
+                    client.select(mailbox)
+                except imaplib.IMAP4.error:
+                    if mailbox == "suppliers":
+                        logger.warning("Folder 'suppliers' not found. Falling back to INBOX.")
+                        client.select("INBOX")
+                    else:
+                        raise
                 
                 # Search unseen emails
                 _, message_ids = client.search(None, "UNSEEN")
                 ids = message_ids[0].split() if message_ids and message_ids[0] else []
-                logger.info("Account %s has %s unread messages", account.email_address, len(ids))
+                logger.info("Account %s has %s unread messages in %s", account.email_address, len(ids), mailbox)
                 
                 for msg_id in ids:
                     logger.info("Fetching message id=%s for account %s", msg_id.decode(), account.email_address)
-                    _, data = client.fetch(msg_id, "(RFC822)")
+                    _, data = client.fetch(msg_id, "(BODY.PEEK[])")
                     if not data or not isinstance(data[0], tuple):
                         continue
                     
@@ -401,35 +416,73 @@ class EmailIngestionService:
                         precedence = message.get("Precedence", "")
                         if "promotions" in labels.lower() or "category-promo" in labels.lower() or list_unsubscribe or precedence.lower() in ("bulk", "list"):
                             logger.info("Skipping email id=%s because it matches promotions/bulk tab signature", msg_id.decode())
+                            client.store(msg_id, "+FLAGS", "\\Seen")
                             continue
 
                     # Require PDF attachments
                     attachments = self._pdf_attachments(message)
                     if active_filter and active_filter.require_attachment and not attachments:
                         logger.info("Skipping email id=%s because PDF attachment is required but none found", msg_id.decode())
+                        client.store(msg_id, "+FLAGS", "\\Seen")
                         continue
                     
-                    # Sender keywords filter (comma-separated, case-insensitive)
-                    if active_filter and active_filter.sender_keywords:
-                        keywords = [kw.strip().lower() for kw in active_filter.sender_keywords.split(",") if kw.strip()]
-                        if keywords:
-                            matched = any(kw in sender.lower() for kw in keywords)
-                            if not matched:
-                                logger.info("Skipping email id=%s because sender %s doesn't match sender_keywords", msg_id.decode(), sender)
+                    # Check Ingestion Approach 2
+                    if approach == "approach_2" and sync_setting:
+                        domain = sender.split("@")[-1].lower() if "@" in sender else sender.lower()
+                        trusted_list = [t.strip().lower() for t in sync_setting.trusted_suppliers.split(",") if t.strip()]
+                        
+                        is_trusted = (sender.lower() in trusted_list) or (domain in trusted_list)
+                        if not is_trusted:
+                            # Check if subject/body matches keywords
+                            keywords = [k.strip().lower() for k in sync_setting.keyword_filters.split(",") if k.strip()]
+                            subject_lower = subject.lower()
+                            
+                            # Also check body for keywords
+                            body_text = ""
+                            if message.is_multipart():
+                                for part in message.walk():
+                                    content_type = part.get_content_type()
+                                    if content_type == "text/plain":
+                                        payload = part.get_payload(decode=True)
+                                        if payload:
+                                            body_text += payload.decode(errors="ignore")
+                            else:
+                                payload = message.get_payload(decode=True)
+                                if payload:
+                                    body_text += payload.decode(errors="ignore")
+                            body_lower = body_text.lower()
+                            
+                            matches_keywords = any(k in subject_lower for k in keywords) or any(k in body_lower for k in keywords)
+                            
+                            if matches_keywords and attachments:
+                                # New supplier alert! Add to pending_approvals and DO NOT mark read
+                                import json
+                                try:
+                                    pending_list = json.loads(sync_setting.pending_approvals or "[]")
+                                except Exception:
+                                    pending_list = []
+                                
+                                if not any(item["email_id"] == msg_id.decode() for item in pending_list):
+                                    pending_list.append({
+                                        "email_id": msg_id.decode(),
+                                        "sender": sender,
+                                        "subject": subject,
+                                        "date": datetime.now(UTC).isoformat()
+                                    })
+                                    sync_setting.pending_approvals = json.dumps(pending_list)
+                                    self.db.commit()
+                                    logger.info("Added email id=%s to pending_approvals for %s", msg_id.decode(), sender)
                                 continue
-                    
-                    # Subject keywords filter (comma-separated, case-insensitive)
-                    if active_filter and active_filter.subject_keywords:
-                        keywords = [kw.strip().lower() for kw in active_filter.subject_keywords.split(",") if kw.strip()]
-                        if keywords:
-                            matched = any(kw in subject.lower() for kw in keywords)
-                            if not matched:
-                                logger.info("Skipping email id=%s because subject %r doesn't match subject_keywords", msg_id.decode(), subject)
+                            else:
+                                # Doesn't match keywords or has no attachments, skip and mark as seen
+                                logger.info("Skipping non-supplier email id=%s from=%s subject=%r", msg_id.decode(), sender, subject)
+                                client.store(msg_id, "+FLAGS", "\\Seen")
                                 continue
                     
                     # Process message if we have attachments and matched everything
                     if attachments:
                         processed += self._process_message(message, raw_email_id=msg_id.decode(), tenant_id=account.user_id)
+                        client.store(msg_id, "+FLAGS", "\\Seen")
                 
                 # Update status
                 account.sync_status = "ok"

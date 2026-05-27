@@ -1095,8 +1095,7 @@ th {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  min-height: 66px;
-  padding: 16px 20px;
+  padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
@@ -1120,12 +1119,13 @@ th {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-width: 260px;
-  height: 34px;
+  min-width: 330px;
+  height: 36px;
   padding: 0 12px;
-  border-radius: 999px;
-  color: #fff;
-  background: var(--accent);
+  border: 1px solid #cfe5dc;
+  border-radius: 8px;
+  color: #6da797;
+  background: #fff;
 }
 
 .compare-search input {
@@ -1133,17 +1133,17 @@ th {
   min-width: 0;
   border: 0;
   outline: 0;
-  color: #fff;
+  color: var(--ink);
   background: transparent;
   font-size: 14px;
 }
 
 .compare-search input::placeholder {
-  color: rgba(255, 255, 255, 0.82);
+  color: #7caf9f;
 }
 
 .compare-sort select {
-  height: 34px;
+  height: 36px;
   min-width: 160px;
   border: 1px solid #cce7dd;
   border-radius: 8px;
@@ -1151,6 +1151,8 @@ th {
   background: #eef9f4;
   padding: 0 12px;
   outline: 0;
+  font-size: 13px;
+  font-family: inherit;
 }
 
 .compare-note {
@@ -1465,6 +1467,8 @@ th {
   background: #eef9f4;
   padding: 0 10px;
   outline: 0;
+  font-size: 13px;
+  font-family: inherit;
 }
 
 .supplier-table-panel,

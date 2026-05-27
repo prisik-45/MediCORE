@@ -20,6 +20,9 @@ import {
   TrendingUp,
   Users,
   X,
+  Sliders,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -134,7 +137,12 @@ type EmailSyncSetting = {
   poll_interval_minutes: number;
   auto_extract_catalog: boolean;
   notify_on_new_catalog: boolean;
+  ingestion_approach?: string;
+  trusted_suppliers?: string;
+  keyword_filters?: string;
+  pending_approvals?: string;
 };
+
 
 const AUTH_STORAGE_KEY = "medicore-auth-user";
 const GMAIL_SETTINGS_STORAGE_KEY = "medicore-gmail-settings";
@@ -304,6 +312,45 @@ export default function Home() {
   const [savingSyncSettings, setSavingSyncSettings] = useState(false);
   const [settingsSaveFeedback, setSettingsSaveFeedback] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
+
+  // Local states for settings inputs
+  const [localApproach, setLocalApproach] = useState<string>("approach_2");
+  const [localTrusted, setLocalTrusted] = useState<string>("");
+  const [localKeywords, setLocalKeywords] = useState<string>("catalog, catalogue, price, offer, quote");
+
+  useEffect(() => {
+    if (syncSettings) {
+      setLocalApproach(syncSettings.ingestion_approach || "approach_2");
+      setLocalTrusted(syncSettings.trusted_suppliers || "");
+      setLocalKeywords(syncSettings.keyword_filters || "catalog, catalogue, price, offer, quote");
+    }
+  }, [syncSettings]);
+
+  const pendingApprovalsList = useMemo(() => {
+    try {
+      return JSON.parse(syncSettings.pending_approvals || "[]");
+    } catch (e) {
+      return [];
+    }
+  }, [syncSettings.pending_approvals]);
+
+  // Click outside detection to close the notifications menu
+  useEffect(() => {
+    function handleDocumentClick(event: MouseEvent) {
+      if (!userMenuOpen) return;
+      const target = event.target as HTMLElement;
+      const navbarActionsElement = document.querySelector(".navbar-actions");
+      if (navbarActionsElement && !navbarActionsElement.contains(target)) {
+        setUserMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleDocumentClick);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+    };
+  }, [userMenuOpen]);
+
+
 
   // Add Account Form States
   const [addAccountExpanded, setAddAccountExpanded] = useState(false);
@@ -904,7 +951,7 @@ export default function Home() {
     }
   }
 
-  async function saveEmailSyncSettings(updatedSettings: Partial<EmailSyncSetting>) {
+  async function saveEmailSyncSettings(updatedSettings: Partial<any>) {
     setSavingSyncSettings(true);
     const merged = { ...syncSettings, ...updatedSettings };
     setSyncSettings(merged);
@@ -917,6 +964,10 @@ export default function Home() {
           poll_interval_minutes: Number(merged.poll_interval_minutes),
           auto_extract_catalog: Boolean(merged.auto_extract_catalog),
           notify_on_new_catalog: Boolean(merged.notify_on_new_catalog),
+          ingestion_approach: String(merged.ingestion_approach || "approach_2"),
+          trusted_suppliers: String(merged.trusted_suppliers || ""),
+          keyword_filters: String(merged.keyword_filters || "catalog, catalogue, price, offer, quote"),
+          pending_approvals: String(merged.pending_approvals || ""),
         }),
       });
       if (res.ok) {
@@ -930,6 +981,51 @@ export default function Home() {
     } finally {
       setSavingSyncSettings(false);
     }
+  }
+
+  async function handleGrantAccess(item: any) {
+    const sender = item.sender.trim().toLowerCase();
+    const domain = sender.split("@")[1] || sender;
+    
+    const currentTrusted = syncSettings.trusted_suppliers || "";
+    const trustedList = currentTrusted.split(",").map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+    if (!trustedList.includes(sender) && !trustedList.includes(domain)) {
+      trustedList.push(sender);
+    }
+    const newTrusted = trustedList.join(", ");
+    
+    let currentPending: any[] = [];
+    try {
+      currentPending = JSON.parse(syncSettings.pending_approvals || "[]");
+    } catch (e) {
+      currentPending = [];
+    }
+    const newPending = currentPending.filter((p: any) => p.email_id !== item.email_id);
+    
+    await saveEmailSyncSettings({
+      trusted_suppliers: newTrusted,
+      pending_approvals: JSON.stringify(newPending)
+    });
+    
+    try {
+      await authFetch(`${apiBaseUrl}/api/ingestion/poll-now`, { method: "POST" });
+    } catch (e) {
+      console.error("Error triggering immediate poll:", e);
+    }
+  }
+
+  async function handleIgnoreAccess(item: any) {
+    let currentPending: any[] = [];
+    try {
+      currentPending = JSON.parse(syncSettings.pending_approvals || "[]");
+    } catch (e) {
+      currentPending = [];
+    }
+    const newPending = currentPending.filter((p: any) => p.email_id !== item.email_id);
+    
+    await saveEmailSyncSettings({
+      pending_approvals: JSON.stringify(newPending)
+    });
   }
 
   async function testConnection() {
@@ -1142,20 +1238,201 @@ export default function Home() {
 
   return (
     <>
+      <style>{`
+        @keyframes pulse-bell {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.15) rotate(8deg); }
+          100% { transform: scale(1); }
+        }
+        @keyframes fade-in-down {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
       {/* Navbar */}
       <nav className="navbar">
         <div className="navbar-brand">
           <h1>MediCORE</h1>
         </div>
-        <div className="navbar-actions">
+        <div className="navbar-actions" style={{ position: "relative" }}>
           <div className="user-menu" onClick={() => setUserMenuOpen(!userMenuOpen)}>
             <div className="user-avatar">{userInitials(authUser.name, authUser.email)}</div>
             <div className="user-info">
               <p>{authUser.name}</p>
               <span>{authUser.role}</span>
             </div>
-            <ChevronDown size={16} />
+            {/* Pulsating Bell Icon instead of ChevronDown */}
+            <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", marginLeft: "4px" }}>
+              <Bell
+                size={18}
+                style={{
+                  color: pendingApprovalsList.length > 0 ? "var(--accent)" : "var(--muted)",
+                  transition: "all 0.3s ease",
+                  animation: pendingApprovalsList.length > 0 ? "pulse-bell 1.5s infinite ease-in-out" : "none"
+                }}
+              />
+              {pendingApprovalsList.length > 0 && (
+                <span style={{
+                  position: "absolute",
+                  top: "-4px",
+                  right: "-4px",
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  background: "#ff5a5a",
+                  border: "2px solid #fff",
+                  boxShadow: "0 0 6px rgba(255, 90, 90, 0.6)"
+                }} />
+              )}
+            </div>
           </div>
+
+          {/* Floating Notifications Window */}
+          {userMenuOpen && (
+            <div style={{
+              position: "absolute",
+              top: "54px",
+              right: 0,
+              width: "380px",
+              background: "rgba(255, 255, 255, 0.95)",
+              backdropFilter: "blur(16px)",
+              border: "1px solid var(--line)",
+              borderRadius: "14px",
+              boxShadow: "0 10px 30px rgba(0, 0, 0, 0.08)",
+              zIndex: 1000,
+              padding: "16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+              animation: "fade-in-down 0.2s ease-out"
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "10px" }}>
+                <span style={{ fontSize: "14px", fontWeight: 700, color: "#092f28", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <Bell size={16} /> Notifications
+                </span>
+                {pendingApprovalsList.length > 0 && (
+                  <span style={{ fontSize: "11px", background: "rgba(255, 90, 90, 0.1)", color: "#ff5a5a", padding: "2px 8px", borderRadius: "10px", fontWeight: 600 }}>
+                    {pendingApprovalsList.length} Pending Approval{pendingApprovalsList.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+
+              {/* Notifications List Container */}
+              <div style={{
+                maxHeight: "280px",
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px"
+              }}>
+                {pendingApprovalsList.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px",
+                    textAlign: "center",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}>
+                    <div style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "50%",
+                      background: "rgba(15, 122, 95, 0.06)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "var(--accent)"
+                    }}>
+                      <CheckCircle2 size={20} />
+                    </div>
+                    <strong style={{ fontSize: "13px", color: "var(--ink)" }}>All Caught Up!</strong>
+                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>No new supplier permission requests pending.</span>
+                  </div>
+                ) : (
+                  pendingApprovalsList.map((item: any) => (
+                    <div
+                      key={item.email_id}
+                      style={{
+                        padding: "12px",
+                        borderRadius: "10px",
+                        background: "rgba(0, 0, 0, 0.015)",
+                        border: "1px solid var(--line)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
+                      }}
+                    >
+                      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <span style={{ fontWeight: 700, fontSize: "12.5px", color: "var(--ink)", wordBreak: "break-all", paddingRight: "8px" }}>
+                            {item.sender}
+                          </span>
+                          <span style={{ fontSize: "10px", color: "var(--muted)", whiteSpace: "nowrap" }}>
+                            {formatRelativeTime(item.date)}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: "11.5px", color: "var(--muted)", fontStyle: "italic", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {item.subject || "(No Subject)"}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleGrantAccess(item);
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            fontSize: "11.5px",
+                            fontWeight: 600,
+                            borderRadius: "6px",
+                            border: "none",
+                            background: "var(--accent)",
+                            color: "#fff",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "4px"
+                          }}
+                        >
+                          <CheckCircle2 size={13} /> Grant Access
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleIgnoreAccess(item);
+                          }}
+                          style={{
+                            padding: "6px 12px",
+                            fontSize: "11.5px",
+                            fontWeight: 600,
+                            borderRadius: "6px",
+                            border: "1px solid var(--line)",
+                            background: "#fff",
+                            color: "var(--muted)",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "4px"
+                          }}
+                        >
+                          <XCircle size={13} /> Ignore
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -1624,8 +1901,8 @@ export default function Home() {
                   <span>Sort by</span>
                   <select value={compareSort} onChange={(event) => setCompareSort(event.target.value as CompareSort)}>
                     <option value="best-value">Best value score</option>
-                    <option value="lowest-price">Lowest price</option>
                     <option value="highest-qty">Highest qty</option>
+                    <option value="lowest-price">Lowest price</option>
                   </select>
                 </label>
               </div>
@@ -1845,9 +2122,9 @@ export default function Home() {
                 display: "flex",
                 flexDirection: "column",
                 gap: "24px",
-                minHeight: "calc(100vh - var(--navbar-height) - 48px)",
-                padding: "24px 0",
+                height: "calc(100vh - var(--navbar-height) - 64px)",
                 alignItems: "stretch",
+                overflow: "hidden",
               }}>
               {/* Horizontal Tabs Header Panel */}
               <div className="settings-header-panel" style={{
@@ -1860,6 +2137,7 @@ export default function Home() {
                 flexDirection: "column",
                 gap: "16px",
                 boxShadow: "0 4px 20px rgba(0, 0, 0, 0.015)",
+                flexShrink: 0,
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Workspace Settings</h2>
@@ -1874,8 +2152,7 @@ export default function Home() {
                 }}>
                   {[
                     { id: "profile", label: "Profile", icon: <Users size={16} /> },
-                    { id: "email", label: "Email Access", icon: <Inbox size={16} /> },
-                    { id: "notifications", label: "Notifications", icon: <Bell size={16} /> },
+                    { id: "email", label: "Supplier Connection", icon: <Sliders size={16} /> },
                     { id: "security", label: "Security", icon: <Shield size={16} /> },
                   ].map((tab) => (
                     <button
@@ -1926,7 +2203,8 @@ export default function Home() {
                 display: "flex",
                 flexDirection: "column",
                 gap: "24px",
-                minHeight: "500px",
+                overflowY: "auto",
+                flex: "1 1 0%",
               }}>
                 {/* 1. PROFILE TAB */}
                 {settingsActiveTab === "profile" && authUser && (
@@ -1959,463 +2237,165 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 2. EMAIL ACCESS TAB */}
+                {/* 2. SUPPLIER CONNECTION TAB */}
                 {settingsActiveTab === "email" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
                     <div>
-                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Email Access</h2>
-                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Manage connected mailboxes and configure automated catalog polling.</p>
+                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700, color: "#092f28" }}>Supplier Connection</h2>
+                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Configure how MediCORE scans and reads catalog emails from your inbox.</p>
                     </div>
 
-                    {/* Section 1: Connected Accounts */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                      <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Connected Accounts</h3>
-                      
-                      {loadingAccounts ? (
-                        <div style={{ padding: "32px", textAlign: "center", color: "var(--muted)" }}>Loading linked inboxes...</div>
-                      ) : connectedAccounts.length === 0 ? (
-                        <div style={{
-                          padding: "48px 32px",
-                          border: "2px dashed var(--line)",
-                          borderRadius: "12px",
-                          textAlign: "center",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: "12px",
-                        }}>
-                          <Mail size={32} style={{ color: "var(--muted)" }} />
-                          <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>No connected accounts yet</h4>
-                          <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)", maxWidth: "320px" }}>
-                            Link a Gmail inbox with an App Password to begin pulling catalogue PDFs automatically.
-                          </p>
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                          {connectedAccounts.map((account) => (
-                            <div
-                              key={account.id}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "16px 20px",
-                                background: "rgba(255, 255, 255, 0.5)",
-                                border: "1px solid var(--line)",
-                                borderRadius: "12px",
-                                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.01)",
-                                transition: "all 0.2s ease",
-                              }}
-                            >
-                              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                                <div style={{
-                                  width: "40px",
-                                  height: "40px",
-                                  borderRadius: "8px",
-                                  background: "rgba(15, 122, 95, 0.06)",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: "18px",
-                                  fontWeight: 700,
-                                  color: "var(--accent)"
-                                }}>
-                                  G
-                                </div>
-                                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                    <span style={{ fontWeight: 600, fontSize: "14px" }}>{account.email_address}</span>
-                                    <span style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "10px", background: "#f0f4f2", color: "var(--muted)" }}>
-                                      {account.provider}
-                                    </span>
-                                  </div>
-                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                    <div style={{
-                                      width: "8px",
-                                      height: "8px",
-                                      borderRadius: "50%",
-                                      background: account.sync_status === "error" ? "#e53e3e" : "#319795",
-                                      boxShadow: account.sync_status === "error" ? "0 0 8px rgba(229, 62, 62, 0.6)" : "0 0 8px rgba(49, 151, 149, 0.6)"
-                                    }}></div>
-                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>
-                                      {account.sync_status === "error" 
-                                        ? `Sync Fail: ${account.sync_error_msg || "IMAP login failure"}` 
-                                        : `Status OK — Synced ${formatRelativeTime(account.last_synced_at)}`}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <button
-                                  type="button"
-                                  onClick={() => triggerAccountSync(account.id)}
-                                  disabled={syncingAccountsState[account.id]}
-                                  style={{
-                                    padding: "6px 12px",
-                                    fontSize: "12px",
-                                    fontWeight: 600,
-                                    borderRadius: "6px",
-                                    border: "1px solid var(--line)",
-                                    background: "#fff",
-                                    cursor: "pointer",
-                                    color: "var(--accent)",
-                                  }}
-                                >
-                                  {syncingAccountsState[account.id] ? "Syncing..." : "Sync Now"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => editAccount(account)}
-                                  style={{
-                                    padding: "6px 12px",
-                                    fontSize: "12px",
-                                    fontWeight: 600,
-                                    borderRadius: "6px",
-                                    border: "1px solid var(--line)",
-                                    background: "#fff",
-                                    cursor: "pointer",
-                                    color: "var(--ink)",
-                                  }}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => deleteAccount(account.id)}
-                                  style={{
-                                    padding: "6px 12px",
-                                    fontSize: "12px",
-                                    fontWeight: 600,
-                                    borderRadius: "6px",
-                                    border: "1px solid rgba(229, 62, 62, 0.1)",
-                                    background: "rgba(229, 62, 62, 0.05)",
-                                    cursor: "pointer",
-                                    color: "#e53e3e",
-                                  }}
-                                >
-                                  Disconnect
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Section 2: Add Email Account */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                      {!addAccountExpanded ? (
-                        <button
-                          type="button"
-                          onClick={() => setAddAccountExpanded(true)}
+                    {/* Method Selection visual cards */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 600, color: "var(--ink)" }}>Choose Email Ingestion Approach</h3>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                        {/* Approach 1 */}
+                        <div
+                          onClick={() => setLocalApproach("approach_1")}
                           style={{
-                            padding: "14px 20px",
-                            background: "rgba(15, 122, 95, 0.08)",
-                            color: "var(--accent)",
-                            border: "none",
-                            borderRadius: "10px",
-                            fontWeight: 600,
-                            fontSize: "14px",
+                            padding: "20px",
+                            borderRadius: "12px",
+                            border: `2px solid ${localApproach === "approach_1" ? "var(--accent)" : "var(--line)"}`,
+                            background: localApproach === "approach_1" ? "rgba(15, 122, 95, 0.04)" : "rgba(255, 255, 255, 0.4)",
                             cursor: "pointer",
-                            textAlign: "center",
-                            width: "fit-content",
+                            transition: "all 0.2s ease",
                             display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            transition: "all 0.2s ease"
+                            flexDirection: "column",
+                            gap: "8px"
                           }}
                         >
-                          <Plus size={16} /> Link employee email account
-                        </button>
-                      ) : (
-                        <div style={{
-                          padding: "24px",
-                          border: "1px solid var(--line)",
-                          borderRadius: "12px",
-                          background: "rgba(255, 255, 255, 0.4)",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "20px",
-                        }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 700 }}>
-                              {editingAccountId ? "Edit Connected Inbox" : "Link New Inbox"}
-                            </h4>
-                            <button
-                              type="button"
-                              onClick={resetAddAccountForm}
-                              style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
-                            >
-                              ✕ Cancel
-                            </button>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <strong style={{ fontSize: "15px", color: localApproach === "approach_1" ? "var(--accent)" : "var(--ink)" }}>Gmail Label Ingestion</strong>
+                            <div style={{
+                              width: "20px",
+                              height: "20px",
+                              borderRadius: "50%",
+                              border: `2px solid ${localApproach === "approach_1" ? "var(--accent)" : "var(--muted)"}`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center"
+                            }}>
+                              {localApproach === "approach_1" && <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: "var(--accent)" }} />}
+                            </div>
                           </div>
-
-                          {/* Setup Steps indicator */}
-                          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-                            {[1, 2, 3, 4].map((step) => (
-                              <div
-                                key={step}
-                                onClick={() => step <= setupStep && setSetupStep(step)}
-                                style={{
-                                  flex: 1,
-                                  height: "6px",
-                                  borderRadius: "3px",
-                                  background: step <= setupStep ? "var(--accent)" : "var(--line)",
-                                  cursor: step <= setupStep ? "pointer" : "default",
-                                  transition: "background 0.3s ease"
-                                }}
-                              />
-                            ))}
-                          </div>
-
-                          {/* STEP 1: Provider Selection */}
-                          {setupStep === 1 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 1: Select Email Provider</span>
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "12px" }}>
-                                <div
-                                  onClick={() => {
-                                    setNewAccountProvider("Gmail");
-                                    setNewAccountImapHost("imap.gmail.com");
-                                    setNewAccountImapPort(993);
-                                    setSetupStep(2);
-                                  }}
-                                  style={{
-                                    padding: "20px",
-                                    borderRadius: "10px",
-                                    border: "2px solid var(--accent)",
-                                    background: "rgba(15, 122, 95, 0.04)",
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "16px",
-                                  }}
-                                >
-                                  <Mail size={28} style={{ color: "var(--accent)" }} />
-                                  <div>
-                                    <strong style={{ display: "block", fontSize: "15px" }}>Gmail</strong>
-                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Poll securely using custom credentials & App Passwords.</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* STEP 2: Plain inline guide */}
-                          {setupStep === 2 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 2: Security How-To Guide</span>
-                              
-                              <div style={{
-                                padding: "16px",
-                                background: "#f0f6f4",
-                                borderLeft: "4px solid var(--accent)",
-                                borderRadius: "8px",
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: "10px",
-                              }}>
-                                <h5 style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "var(--accent)" }}>
-                                  How to Link a Gmail Inbox
-                                </h5>
-                                <ol style={{ margin: 0, paddingLeft: "16px", fontSize: "13px", color: "var(--ink)", display: "flex", flexDirection: "column", gap: "6px" }}>
-                                  <li>Ensure <strong>IMAP is Enabled</strong> under your Gmail Settings - Forwarding and POP/IMAP.</li>
-                                  <li>Turn on <strong>2-Step Verification</strong> in your Google Account Security settings.</li>
-                                  <li>Generate a <strong>16-character App Password</strong> specifically for "MediCORE".</li>
-                                  <li>Paste the App Password in the next step (do NOT use your raw Google Login password!).</li>
-                                </ol>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => setSetupStep(3)}
-                                style={{
-                                  padding: "10px 16px",
-                                  background: "var(--accent)",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: "6px",
-                                  fontWeight: 600,
-                                  cursor: "pointer",
-                                  alignSelf: "flex-end"
-                                }}
-                              >
-                                Continue to Credentials
-                              </button>
-                            </div>
-                          )}
-
-                          {/* STEP 3: Credentials Form */}
-                          {setupStep === 3 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 3: Setup App Password & Test Connection</span>
-                              
-                              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                                <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                                  <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Gmail App Password</span>
-                                  <input
-                                    type="password"
-                                    value={newAccountPassword}
-                                    onChange={(e) => setNewAccountPassword(e.target.value)}
-                                    placeholder={editingAccountId ? "•••••••••••••••• (Leave blank to keep current)" : "16-character app password"}
-                                    style={{ padding: "12px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff", fontSize: "14px" }}
-                                    autoComplete="off"
-                                  />
-                                </label>
-                              </div>
-
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
-                                <button
-                                  type="button"
-                                  onClick={testConnection}
-                                  disabled={testingConnection}
-                                  style={{
-                                    padding: "10px 16px",
-                                    background: "#fff",
-                                    border: "1px solid var(--accent)",
-                                    color: "var(--accent)",
-                                    borderRadius: "6px",
-                                    fontWeight: 600,
-                                    cursor: "pointer"
-                                  }}
-                                >
-                                  {testingConnection ? "Verifying Credentials..." : "Test Connection"}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setSetupStep(4)}
-                                  disabled={!testResult?.success}
-                                  style={{
-                                    padding: "10px 16px",
-                                    background: testResult?.success ? "var(--accent)" : "#f0f2f0",
-                                    color: testResult?.success ? "#fff" : "var(--muted)",
-                                    border: "none",
-                                    borderRadius: "6px",
-                                    fontWeight: 600,
-                                    cursor: testResult?.success ? "pointer" : "default"
-                                  }}
-                                >
-                                  Configure Filters ➔
-                                </button>
-                              </div>
-
-                              {testResult && (
-                                <div style={{
-                                  padding: "12px",
-                                  borderRadius: "8px",
-                                  fontSize: "13px",
-                                  background: testResult.success ? "rgba(49, 151, 149, 0.08)" : "rgba(229, 62, 62, 0.08)",
-                                  border: testResult.success ? "1px solid rgba(49, 151, 149, 0.2)" : "1px solid rgba(229, 62, 62, 0.2)",
-                                  color: testResult.success ? "#2c7a7b" : "#c53030",
-                                }}>
-                                  {testResult.message}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* STEP 4: Filters Selection */}
-                          {setupStep === 4 && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--muted)" }}>Step 4: Configure Email Ingestion Filters</span>
-                              
-                              <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "16px", background: "rgba(0, 0, 0, 0.01)", border: "1px solid var(--line)", borderRadius: "10px" }}>
-                                <label style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: "12px", cursor: "pointer" }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={filterRequireAttachment}
-                                    onChange={(e) => setFilterRequireAttachment(e.target.checked)}
-                                    style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
-                                  />
-                                  <div>
-                                    <strong style={{ display: "block", fontSize: "14px" }}>Require PDF Attachment</strong>
-                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Only process emails containing PDF catalogue attachments.</span>
-                                  </div>
-                                </label>
-
-                                <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
-
-                                <label style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: "12px", cursor: "pointer" }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={filterSkipPromotions}
-                                    onChange={(e) => setFilterSkipPromotions(e.target.checked)}
-                                    style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
-                                  />
-                                  <div>
-                                    <strong style={{ display: "block", fontSize: "14px" }}>Skip Gmail Promotions & Bulk Newsletters</strong>
-                                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>Avoid processing commercial bulk newsletters and marketing emails.</span>
-                                  </div>
-                                </label>
-
-                                <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
-
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <strong style={{ fontSize: "14px" }}>Sender Keyword Whitelist</strong>
-                                  <span style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>Comma-separated keywords (e.g. <i>supplier, pharmacy</i>). Only pull from matching senders.</span>
-                                  <input
-                                    type="text"
-                                    value={filterSenderKeywords}
-                                    onChange={(e) => setFilterSenderKeywords(e.target.value)}
-                                    placeholder="Enter whitelist keywords..."
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
-                                  />
-                                </label>
-
-                                <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                                  <strong style={{ fontSize: "14px" }}>Subject Keyword Whitelist</strong>
-                                  <span style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>Comma-separated keywords (e.g. <i>catalog, price, ingredients</i>). Only pull matching emails.</span>
-                                  <input
-                                    type="text"
-                                    value={filterSubjectKeywords}
-                                    onChange={(e) => setFilterSubjectKeywords(e.target.value)}
-                                    placeholder="Enter subject keywords..."
-                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
-                                  />
-                                </label>
-                              </div>
-
-                              <div style={{ display: "flex", justifyItems: "center", gap: "12px", marginLeft: "auto" }}>
-                                <button
-                                  type="button"
-                                  onClick={() => setSetupStep(3)}
-                                  style={{
-                                    padding: "10px 16px",
-                                    background: "#fff",
-                                    border: "1px solid var(--line)",
-                                    borderRadius: "6px",
-                                    fontWeight: 600,
-                                    cursor: "pointer"
-                                  }}
-                                >
-                                  ⬅ Back
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={saveAccount}
-                                  disabled={savingAccount}
-                                  style={{
-                                    padding: "10px 24px",
-                                    background: "var(--accent)",
-                                    color: "#fff",
-                                    border: "none",
-                                    borderRadius: "6px",
-                                    fontWeight: 700,
-                                    cursor: "pointer"
-                                  }}
-                                >
-                                  {savingAccount ? "Saving inbox..." : "Save and Poll Inbox"}
-                                </button>
-                              </div>
-                            </div>
-                          )}
+                          <span style={{ fontSize: "12.5px", color: "var(--muted)", lineHeight: "1.4" }}>
+                            MediCORE will strictly monitor and parse emails tagged with the Gmail label <strong>'suppliers'</strong>. Safe, manual, and explicit.
+                          </span>
                         </div>
-                      )}
+
+                        {/* Approach 2 */}
+                        <div
+                          onClick={() => setLocalApproach("approach_2")}
+                          style={{
+                            padding: "20px",
+                            borderRadius: "12px",
+                            border: `2px solid ${localApproach === "approach_2" ? "var(--accent)" : "var(--line)"}`,
+                            background: localApproach === "approach_2" ? "rgba(15, 122, 95, 0.04)" : "rgba(255, 255, 255, 0.4)",
+                            cursor: "pointer",
+                            transition: "all 0.2s ease",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px"
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <strong style={{ fontSize: "15px", color: localApproach === "approach_2" ? "var(--accent)" : "var(--ink)" }}>Smart Keyword Ingestion</strong>
+                            <div style={{
+                              width: "20px",
+                              height: "20px",
+                              borderRadius: "50%",
+                              border: `2px solid ${localApproach === "approach_2" ? "var(--accent)" : "var(--muted)"}`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center"
+                            }}>
+                              {localApproach === "approach_2" && <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: "var(--accent)" }} />}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: "12.5px", color: "var(--muted)", lineHeight: "1.4" }}>
+                            Automatically read trusted suppliers. Screen unrecognized senders for keywords; if a match with PDF is found, request approval in the Navbar.
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
-                    {/* Section 3: Sync Settings Card */}
+                    {/* Section depending on Approach */}
+                    {localApproach === "approach_1" ? (
+                      <div style={{
+                        padding: "20px",
+                        background: "rgba(255, 255, 255, 0.4)",
+                        border: "1px solid var(--line)",
+                        borderRadius: "12px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "14px"
+                      }}>
+                        <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "var(--accent)", display: "flex", alignItems: "center", gap: "8px" }}>
+                          <Sliders size={16} /> How to set up Gmail Labeling for MediCORE
+                        </h4>
+                        <ol style={{ margin: 0, paddingLeft: "20px", fontSize: "13.5px", color: "var(--ink)", display: "flex", flexDirection: "column", gap: "10px", lineHeight: "1.5" }}>
+                          <li>Open your linked Gmail account in a browser.</li>
+                          <li>Go to <strong>Settings</strong> ➔ <strong>Labels</strong>. Scroll down and click <strong>Create a new label</strong>.</li>
+                          <li>Enter <strong>suppliers</strong> (all lowercase) as the label name and click Create.</li>
+                          <li>Apply this new label to any incoming emails from your suppliers.</li>
+                          <li>MediCORE will dynamically sync and analyze catalogs <em>only</em> inside this labeled folder.</li>
+                        </ol>
+                      </div>
+                    ) : (
+                      <div style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "20px",
+                        padding: "24px",
+                        background: "rgba(255, 255, 255, 0.4)",
+                        border: "1px solid var(--line)",
+                        borderRadius: "12px"
+                      }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontWeight: 600, fontSize: "14px", color: "var(--ink)" }}>Trusted Supplier Emails / Domains</label>
+                          <span style={{ fontSize: "12px", color: "var(--muted)" }}>Enter trusted domains or exact emails (separated by commas). Emails from these suppliers will bypass permission requests and ingest automatically.</span>
+                          <textarea
+                            value={localTrusted}
+                            onChange={(e) => setLocalTrusted(e.target.value)}
+                            placeholder="e.g. sigmaaldrich.com, orders@pharmacy.com, trustedsupplier.in"
+                            rows={3}
+                            style={{
+                              padding: "12px",
+                              borderRadius: "8px",
+                              border: "1px solid var(--line)",
+                              background: "#fff",
+                              fontSize: "14px",
+                              lineHeight: "1.5",
+                              resize: "vertical",
+                              fontFamily: "inherit"
+                            }}
+                          />
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontWeight: 600, fontSize: "14px", color: "var(--ink)" }}>Smart Ingestion Keywords</label>
+                          <span style={{ fontSize: "12px", color: "var(--muted)" }}>Comma-separated words to detect incoming catalog emails from new/unrecognized suppliers (subject or body).</span>
+                          <textarea
+                            value={localKeywords}
+                            onChange={(e) => setLocalKeywords(e.target.value)}
+                            placeholder="e.g. catalog, catalogue, price, offer, quote, inventory, sheet"
+                            rows={2}
+                            style={{
+                              padding: "12px",
+                              borderRadius: "8px",
+                              border: "1px solid var(--line)",
+                              background: "#fff",
+                              fontSize: "14px",
+                              lineHeight: "1.5",
+                              resize: "vertical",
+                              fontFamily: "inherit"
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Section 3: General Polling Settings Card */}
                     <div style={{
                       padding: "24px",
                       borderRadius: "12px",
@@ -2423,24 +2403,23 @@ export default function Home() {
                       border: "1px solid var(--line)",
                       display: "flex",
                       flexDirection: "column",
-                      gap: "20px",
-                      marginTop: "16px"
+                      gap: "20px"
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
-                          <h4 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>General Polling Settings</h4>
-                          <p style={{ margin: "4px 0 0 0", color: "var(--muted)", fontSize: "13px" }}>Set global cron behaviors for attachment processing.</p>
+                          <h4 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#092f28" }}>General Polling & Automation</h4>
+                          <p style={{ margin: "4px 0 0 0", color: "var(--muted)", fontSize: "13px" }}>Configure background sync frequencies and automatic parser tasks.</p>
                         </div>
                         {settingsSaveFeedback && (
                           <span style={{ fontSize: "12px", background: "rgba(49, 151, 149, 0.1)", color: "#2c7a7b", padding: "4px 10px", borderRadius: "12px", fontWeight: 600 }}>
-                            Saved
+                            Saved Successfully
                           </span>
                         )}
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "16px" }}>
                         <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                          <span style={{ fontSize: "13px", fontWeight: 600 }}>Global Polling Interval</span>
+                          <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Global Polling Interval</span>
                           <select
                             value={syncSettings.poll_interval_minutes}
                             onChange={(e) => saveEmailSyncSettings({ poll_interval_minutes: Number(e.target.value) })}
@@ -2464,7 +2443,7 @@ export default function Home() {
                             style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
                           />
                           <div>
-                            <strong style={{ display: "block", fontSize: "14px" }}>Auto-Extract PDF Catalogue Items</strong>
+                            <strong style={{ display: "block", fontSize: "14px", color: "var(--ink)" }}>Auto-Extract PDF Catalogue Items</strong>
                             <span style={{ fontSize: "12px", color: "var(--muted)" }}>Automatically normalize and extract inventory sheets upon parsing.</span>
                           </div>
                         </label>
@@ -2479,25 +2458,42 @@ export default function Home() {
                             style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
                           />
                           <div>
-                            <strong style={{ display: "block", fontSize: "14px" }}>Push Notifications on New Catalogue Extraction</strong>
+                            <strong style={{ display: "block", fontSize: "14px", color: "var(--ink)" }}>Push Notifications on New Catalogue Extraction</strong>
                             <span style={{ fontSize: "12px", color: "var(--muted)" }}>Notify workspace users in real-time as soon as products match suppliers.</span>
                           </div>
                         </label>
                       </div>
                     </div>
-                  </div>
-                )}
 
-                {/* 3. NOTIFICATIONS TAB */}
-                {settingsActiveTab === "notifications" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                    <div>
-                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>Notifications</h2>
-                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Configure notification options for extracted inventories.</p>
-                    </div>
-                    <div style={{ padding: "16px", border: "1px solid var(--line)", borderRadius: "12px", background: "rgba(0, 0, 0, 0.01)" }}>
-                      <span style={{ fontSize: "14px", color: "var(--muted)" }}>Workspace alerts are currently routed to dashboard banner feed.</span>
-                    </div>
+                    {/* Unified Save Button */}
+                    <button
+                      type="button"
+                      onClick={() => saveEmailSyncSettings({
+                        ingestion_approach: localApproach,
+                        trusted_suppliers: localTrusted,
+                        keyword_filters: localKeywords
+                      })}
+                      disabled={savingSyncSettings}
+                      style={{
+                        padding: "14px 28px",
+                        background: "var(--accent)",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "10px",
+                        fontWeight: 600,
+                        fontSize: "14px",
+                        cursor: "pointer",
+                        width: "fit-content",
+                        alignSelf: "flex-end",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        boxShadow: "0 4px 12px rgba(15, 122, 95, 0.2)",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      {savingSyncSettings ? "Saving Settings..." : "Save Ingestion Settings"}
+                    </button>
                   </div>
                 )}
 
@@ -2535,10 +2531,10 @@ export default function Home() {
                   <label className="supplier-sort">
                     <span>Sort by</span>
                     <select value={supplierSort} onChange={(event) => setSupplierSort(event.target.value as SupplierSort)}>
-                      <option value="latest">Latest catalogue</option>
-                      <option value="reliability">Reliability</option>
                       <option value="items">Catalogue items</option>
+                      <option value="latest">Latest catalogue</option>
                       <option value="name">Name</option>
+                      <option value="reliability">Reliability</option>
                     </select>
                   </label>
                 </div>
