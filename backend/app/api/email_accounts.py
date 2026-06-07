@@ -1,0 +1,560 @@
+import imaplib
+import logging
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+
+from backend.app.db import get_db
+from backend.app.auth import get_current_user, encrypt_password
+from backend.app.models import EmailAccount, EmailFilter
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# --- Pydantic Schemas ---
+
+class IMAPTestRequest(BaseModel):
+    provider: str = Field(..., description="E.g., Gmail, Outlook, Custom")
+    email_address: str = Field(..., description="The full email address")
+    imap_host: str = Field(..., description="IMAP server host")
+    imap_port: int = Field(993, description="IMAP port, usually 993 for SSL")
+    password: str = Field(..., description="Email password or App-specific password")
+
+class IMAPTestResponse(BaseModel):
+    success: bool
+    message: str
+
+class EmailFilterCreate(BaseModel):
+    require_attachment: bool = False
+    sender_keywords: str | None = None
+    subject_keywords: str | None = None
+    skip_promotions_tab: bool = False
+
+class EmailAccountCreate(BaseModel):
+    provider: str
+    email_address: str
+    imap_host: str
+    imap_port: int
+    password: str
+    filters: EmailFilterCreate | None = None
+
+class EmailAccountUpdate(BaseModel):
+    provider: str
+    email_address: str
+    imap_host: str
+    imap_port: int
+    password: str | None = None  # optional, if omitted we keep existing password
+    filters: EmailFilterCreate | None = None
+
+class EmailFilterResponse(BaseModel):
+    id: UUID
+    require_attachment: bool
+    sender_keywords: str | None
+    subject_keywords: str | None
+    skip_promotions_tab: bool
+
+    class Config:
+        from_attributes = True
+
+class EmailAccountResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    provider: str
+    email_address: str
+    imap_host: str
+    imap_port: int
+    sync_status: str
+    sync_error_msg: str | None = None
+    last_synced_at: str | None = None
+    created_at: str
+    filters: list[EmailFilterResponse] = []
+
+    class Config:
+        from_attributes = True
+
+class EmailSyncSettingResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    poll_interval_minutes: int
+    auto_extract_catalog: bool
+    notify_on_new_catalog: bool
+    ingestion_approach: str
+    trusted_suppliers: str
+    keyword_filters: str
+    pending_approvals: str
+
+    class Config:
+        from_attributes = True
+
+class EmailSyncSettingUpdate(BaseModel):
+    poll_interval_minutes: int
+    auto_extract_catalog: bool
+    notify_on_new_catalog: bool
+    ingestion_approach: str
+    trusted_suppliers: str
+    keyword_filters: str
+    pending_approvals: str
+
+# --- Helpers ---
+
+def verify_imap_credentials(host: str, port: int, email_address: str, password: str) -> tuple[bool, str]:
+    """Helper to test IMAP connection and credentials synchronously."""
+    try:
+        logger.info(f"Testing IMAP connection to {host}:{port} for {email_address}")
+        if port == 993:
+            # Use SSL
+            mail = imaplib.IMAP4_SSL(host, port, timeout=10)
+        else:
+            # Plain IMAP
+            mail = imaplib.IMAP4(host, port, timeout=10)
+        
+        try:
+            mail.login(email_address, password)
+            mail.logout()
+            return True, "IMAP connection and login verified successfully."
+        except imaplib.IMAP4.error as e:
+            return False, f"IMAP authentication failed: {str(e)}"
+        except Exception as e:
+            return False, f"IMAP login error: {str(e)}"
+    except Exception as e:
+        return False, f"Could not connect to the IMAP server: {str(e)}"
+
+# --- Endpoints ---
+
+@router.post("/test", response_model=IMAPTestResponse)
+def test_imap_connection(
+    request: IMAPTestRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Test the IMAP credentials prior to saving them.
+    Requires user authentication to ensure API security.
+    """
+    success, message = verify_imap_credentials(
+        host=request.imap_host,
+        port=request.imap_port,
+        email_address=request.email_address,
+        password=request.password
+    )
+    return IMAPTestResponse(success=success, message=message)
+
+@router.get("", response_model=list[EmailAccountResponse])
+def list_email_accounts(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """List all connected email accounts for the current authenticated user."""
+    user_uuid = UUID(current_user["id"])
+    accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
+    
+    response = []
+    for acc in accounts:
+        response.append(
+            EmailAccountResponse(
+                id=acc.id,
+                user_id=acc.user_id,
+                provider=acc.provider,
+                email_address=acc.email_address,
+                imap_host=acc.imap_host,
+                imap_port=acc.imap_port,
+                sync_status=acc.sync_status,
+                sync_error_msg=acc.sync_error_msg,
+                last_synced_at=acc.last_synced_at.isoformat() if acc.last_synced_at else None,
+                created_at=acc.created_at.isoformat(),
+                filters=[
+                    EmailFilterResponse(
+                        id=f.id,
+                        require_attachment=f.require_attachment,
+                        sender_keywords=f.sender_keywords,
+                        subject_keywords=f.subject_keywords,
+                        skip_promotions_tab=f.skip_promotions_tab
+                    )
+                    for f in acc.filters
+                ]
+            )
+        )
+    return response
+
+@router.post("", response_model=EmailAccountResponse)
+def save_email_account(
+    request: EmailAccountCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Validate the credentials, then save the email account with encrypted passwords
+    and its filters to the database.
+    """
+    # 1. Double check the credentials to avoid bad database state
+    success, message = verify_imap_credentials(
+        host=request.imap_host,
+        port=request.imap_port,
+        email_address=request.email_address,
+        password=request.password
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot save: credential validation failed. Details: {message}"
+        )
+
+    # 2. Encrypt password securely using Fernet
+    encrypted = encrypt_password(request.password)
+
+    try:
+        user_uuid = UUID(current_user["id"])
+        
+        # 3. Create and add EmailAccount
+        new_account = EmailAccount(
+            user_id=user_uuid,
+            provider=request.provider,
+            email_address=request.email_address,
+            imap_host=request.imap_host,
+            imap_port=request.imap_port,
+            encrypted_password=encrypted,
+            sync_status="verified"
+        )
+        db.add(new_account)
+        db.flush()  # Generate the ID for new_account so filters can reference it
+
+        # 4. Handle optional filters
+        if request.filters:
+            f = request.filters
+            new_filter = EmailFilter(
+                email_account_id=new_account.id,
+                require_attachment=f.require_attachment,
+                sender_keywords=f.sender_keywords,
+                subject_keywords=f.subject_keywords,
+                skip_promotions_tab=f.skip_promotions_tab
+            )
+            db.add(new_filter)
+
+        db.commit()
+        db.refresh(new_account)
+        
+        # Trigger an immediate background sync after creation
+        try:
+            from backend.app.tasks import poll_email_account
+            background_tasks.add_task(poll_email_account, str(new_account.id))
+            try:
+                poll_email_account.delay(str(new_account.id))
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to queue immediate sync for new account {new_account.id}: {e}")
+        
+        return EmailAccountResponse(
+            id=new_account.id,
+            user_id=new_account.user_id,
+            provider=new_account.provider,
+            email_address=new_account.email_address,
+            imap_host=new_account.imap_host,
+            imap_port=new_account.imap_port,
+            sync_status=new_account.sync_status,
+            sync_error_msg=new_account.sync_error_msg,
+            last_synced_at=new_account.last_synced_at.isoformat() if new_account.last_synced_at else None,
+            created_at=new_account.created_at.isoformat(),
+            filters=[
+                EmailFilterResponse(
+                    id=f.id,
+                    require_attachment=f.require_attachment,
+                    sender_keywords=f.sender_keywords,
+                    subject_keywords=f.subject_keywords,
+                    skip_promotions_tab=f.skip_promotions_tab
+                )
+                for f in new_account.filters
+            ]
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving email account: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while saving the email account: {str(e)}"
+        )
+
+@router.get("/sync-settings", response_model=EmailSyncSettingResponse)
+def get_sync_settings(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Retrieve the global email sync settings for the user, creating a default entry if not found."""
+    user_uuid = UUID(current_user["id"])
+    from backend.app.models import EmailSyncSetting
+    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+    if not settings_row:
+        try:
+            settings_row = EmailSyncSetting(
+                user_id=user_uuid,
+                poll_interval_minutes=15,  # Default to 15 minutes
+                auto_extract_catalog=True,
+                notify_on_new_catalog=True,
+                ingestion_approach="approach_2",
+                trusted_suppliers="",
+                keyword_filters="catalog, catalogue, price, offer, quote",
+                pending_approvals=""
+            )
+            db.add(settings_row)
+            db.commit()
+            db.refresh(settings_row)
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating default sync settings: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not initialize default sync settings."
+            )
+    return settings_row
+
+@router.put("/sync-settings", response_model=EmailSyncSettingResponse)
+def update_sync_settings(
+    request: EmailSyncSettingUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update global sync settings for the user."""
+    user_uuid = UUID(current_user["id"])
+    from backend.app.models import EmailSyncSetting
+    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+    if not settings_row:
+        settings_row = EmailSyncSetting(
+            user_id=user_uuid,
+            ingestion_approach="approach_2",
+            trusted_suppliers="",
+            keyword_filters="catalog, catalogue, price, offer, quote",
+            pending_approvals=""
+        )
+        db.add(settings_row)
+        
+    try:
+        settings_row.poll_interval_minutes = request.poll_interval_minutes
+        settings_row.auto_extract_catalog = request.auto_extract_catalog
+        settings_row.notify_on_new_catalog = request.notify_on_new_catalog
+        settings_row.ingestion_approach = request.ingestion_approach
+        settings_row.trusted_suppliers = request.trusted_suppliers
+        settings_row.keyword_filters = request.keyword_filters
+        settings_row.pending_approvals = request.pending_approvals
+        db.commit()
+        db.refresh(settings_row)
+        
+        # Trigger immediate sync for connected accounts
+        accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
+        from backend.app.tasks import poll_email_account
+        for account in accounts:
+            background_tasks.add_task(poll_email_account, str(account.id))
+            try:
+                poll_email_account.delay(str(account.id))
+            except Exception:
+                pass
+
+        return settings_row
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating sync settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while updating sync settings: {str(e)}"
+        )
+
+@router.put("/{account_id}", response_model=EmailAccountResponse)
+def update_email_account(
+    account_id: UUID,
+    request: EmailAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update email account details, credentials and filters securely. Ensures tenant isolation."""
+    user_uuid = UUID(current_user["id"])
+    account = db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.user_id == user_uuid).first()
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email account not found or access denied."
+        )
+    
+    # 1. Determine active password
+    from backend.app.auth import decrypt_password
+    if request.password:
+        active_password = request.password
+    else:
+        try:
+            active_password = decrypt_password(account.encrypted_password)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to decrypt existing password for verification: {str(e)}"
+            )
+
+    # 2. Test Connection
+    success, message = verify_imap_credentials(
+        host=request.imap_host,
+        port=request.imap_port,
+        email_address=request.email_address,
+        password=active_password
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Credential verification failed: {message}"
+        )
+    
+    try:
+        # 3. Update account details
+        account.provider = request.provider
+        account.email_address = request.email_address
+        account.imap_host = request.imap_host
+        account.imap_port = request.imap_port
+        
+        if request.password:
+            account.encrypted_password = encrypt_password(request.password)
+            
+        account.sync_status = "verified"
+        account.sync_error_msg = None
+        
+        # 4. Update or Create filters
+        from backend.app.models import EmailFilter
+        existing_filter = db.query(EmailFilter).filter(EmailFilter.email_account_id == account.id).first()
+        if request.filters:
+            f = request.filters
+            if existing_filter:
+                existing_filter.require_attachment = f.require_attachment
+                existing_filter.sender_keywords = f.sender_keywords
+                existing_filter.subject_keywords = f.subject_keywords
+                existing_filter.skip_promotions_tab = f.skip_promotions_tab
+            else:
+                new_filter = EmailFilter(
+                    email_account_id=account.id,
+                    require_attachment=f.require_attachment,
+                    sender_keywords=f.sender_keywords,
+                    subject_keywords=f.subject_keywords,
+                    skip_promotions_tab=f.skip_promotions_tab
+                )
+                db.add(new_filter)
+        else:
+            if existing_filter:
+                db.delete(existing_filter)
+                
+        db.commit()
+        db.refresh(account)
+        
+        return EmailAccountResponse(
+            id=account.id,
+            user_id=account.user_id,
+            provider=account.provider,
+            email_address=account.email_address,
+            imap_host=account.imap_host,
+            imap_port=account.imap_port,
+            sync_status=account.sync_status,
+            sync_error_msg=account.sync_error_msg,
+            last_synced_at=account.last_synced_at.isoformat() if account.last_synced_at else None,
+            created_at=account.created_at.isoformat(),
+            filters=[
+                EmailFilterResponse(
+                    id=flt.id,
+                    require_attachment=flt.require_attachment,
+                    sender_keywords=flt.sender_keywords,
+                    subject_keywords=flt.subject_keywords,
+                    skip_promotions_tab=flt.skip_promotions_tab
+                )
+                for flt in account.filters
+            ]
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating email account: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while updating the email account: {str(e)}"
+        )
+
+@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_email_account(
+    account_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Disconnect and completely delete an email account. Cascades filters."""
+    user_uuid = UUID(current_user["id"])
+    account = db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.user_id == user_uuid).first()
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email account not found or access denied."
+        )
+    
+    try:
+        db.delete(account)
+        db.commit()
+        return
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting email account: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while deleting the email account: {str(e)}"
+        )
+
+@router.post("/{account_id}/sync", response_model=EmailAccountResponse)
+def trigger_sync_now(
+    account_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Triggers an immediate IMAP sync for the specified account in a Celery background task or local background thread."""
+    user_uuid = UUID(current_user["id"])
+    account = db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.user_id == user_uuid).first()
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email account not found or access denied."
+        )
+        
+    try:
+        # Trigger Celery task + Background task fallback
+        from backend.app.tasks import poll_email_account
+        background_tasks.add_task(poll_email_account, str(account.id))
+        try:
+            poll_email_account.delay(str(account.id))
+        except Exception:
+            pass
+        
+        # Mark sync as pending so frontend gets positive response immediately
+        account.sync_status = "pending"
+        db.commit()
+        db.refresh(account)
+        
+        return EmailAccountResponse(
+            id=account.id,
+            user_id=account.user_id,
+            provider=account.provider,
+            email_address=account.email_address,
+            imap_host=account.imap_host,
+            imap_port=account.imap_port,
+            sync_status=account.sync_status,
+            sync_error_msg=account.sync_error_msg,
+            last_synced_at=account.last_synced_at.isoformat() if account.last_synced_at else None,
+            created_at=account.created_at.isoformat(),
+            filters=[
+                EmailFilterResponse(
+                    id=flt.id,
+                    require_attachment=flt.require_attachment,
+                    sender_keywords=flt.sender_keywords,
+                    subject_keywords=flt.subject_keywords,
+                    skip_promotions_tab=flt.skip_promotions_tab
+                )
+                for flt in account.filters
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Error queueing sync task: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while queueing sync: {str(e)}"
+        )
+
+
+

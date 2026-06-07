@@ -92,44 +92,55 @@ Set the Gmail push subscription endpoint to the deployed FastAPI URL. The webhoo
 
 The LLM never talks to the database directly. Natural-language questions are converted into a whitelisted query plan, validated by Python, executed through parameterized Supabase/Postgres calls, and then summarized conversationally.
 
-## Deployment
-### Railway Supabase Database URL
+## Authentication & Registration Flow
 
-Railway often cannot reach Supabase's direct database host (`db.<project-ref>.supabase.co:5432`) because that direct host can resolve to IPv6. Use Supabase Transaction Pooler for Railway instead.
+MediCORE includes a premium, secure authentication and 3-step registration workflow:
+1. **Account Registration (`/register`)**: Collects essential user details (name, organisation, role, email, password) and registers the user in Supabase Auth. Banners explicitly state that this password is for MediCORE access, distinct from email passwords.
+2. **Supplier Email Setup (`/register/email-setup`)**: Prompts the user to connect their supplier inbox (e.g., Gmail) using a secure IMAP App Password. Includes custom inline guides, advanced collapsible filters (PDF-only toggle, keyword filters, skip promotions tab), and an interactive "Test Connection" button calling the FastAPI backend.
+3. **App Password Encryption**: Credentials are symmetrically encrypted using Fernet (AES-128) with a key derived from the Supabase service role key, ensuring that raw passwords are never stored in the database.
+4. **Triggers and Row Level Security (RLS)**: PostgreSQL triggers automatically create a User Profile and default Email Sync Settings in the database upon signup, protected by Row Level Security (RLS) policies.
 
-In Supabase, open **Project Settings -> Database -> Connection string -> Transaction pooler** and copy the host/user/password values into Railway:
+---
+
+## Deployment & Database Connectivity
+
+### Database Connection and Pooler WARNING
+
+> [!WARNING]
+> In production environments like Railway, the Supabase Transaction Pooler (`aws-0-ap-south-1.pooler.supabase.com:6543`) may throw `FATAL: (ENOTFOUND) tenant/user postgres.vyheggbcjojhipqrvdrz not found` errors. MediCORE's backend automatically prioritizes a direct database connection via port `5432` whenever `SUPABASE_DB_HOST` and `SUPABASE_DB_PASSWORD` are configured. This provides a stable, zero-crash database link.
+
+For production, configure the direct connection variables in Railway:
 
 ```env
 ENVIRONMENT=production
 FRONTEND_ORIGIN=https://medi-core-silk.vercel.app
 MOCK_DATA_ENABLED=false
 
-SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_URL=https://vyheggbcjojhipqrvdrz.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=catalog-pdfs
 
+SUPABASE_DB_HOST=db.vyheggbcjojhipqrvdrz.supabase.co
+SUPABASE_DB_PORT=5432
 SUPABASE_DB_NAME=postgres
+SUPABASE_DB_USER=postgres
 SUPABASE_DB_PASSWORD=your-database-password
-SUPABASE_POOLER_HOST=aws-0-your-region.pooler.supabase.com
-SUPABASE_POOLER_PORT=6543
-SUPABASE_POOLER_USER=postgres.your-project-ref
 ```
 
-Alternatively, set Railway `DATABASE_URL` to the full Transaction Pooler URI from Supabase. Do not use the direct `db.<project-ref>.supabase.co:5432` URI on Railway.
+### Applying Migrations
+Apply migrations using the Supabase SQL editor or direct CLI/TCP tools. The migration scripts in `supabase/migrations/` (such as `002_login_register.sql`) are designed to be fully idempotent, dropping old RLS policies automatically before recreating them to prevent conflicts.
 
-Railway/Vercel test deployment:
-
+### Railway/Vercel Test Deployment:
 - Deploy FastAPI using `backend/Dockerfile`
 - Deploy Redis or use Upstash
 - Use Supabase free tier with pgvector enabled
 - Deploy `frontend` to Vercel
 - Inject environment variables from `.env.example`
 
-AWS production deployment:
-
+### AWS Production Deployment:
 - Run API and Celery worker as separate ECS/Fargate services
 - Use ElastiCache or Upstash Redis
-- Use Supabase Pro, enable RLS policies in `supabase/migrations/001_init.sql`
+- Use Supabase Pro, enable RLS policies in `supabase/migrations/`
 - Configure Gmail Pub/Sub webhook to `/webhooks/gmail`
 ## IMAP Email Test
 

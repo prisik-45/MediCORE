@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func, Integer, Boolean
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -53,3 +54,61 @@ class CatalogItem(Base):
     valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(384))
     raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class Profile(Base):
+    __tablename__ = "profiles"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    full_name: Mapped[str | None] = mapped_column(Text)
+    organisation: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text, default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailAccount(Base):
+    __tablename__ = "email_accounts"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(Text)
+    email_address: Mapped[str] = mapped_column(Text)
+    imap_host: Mapped[str] = mapped_column(Text)
+    imap_port: Mapped[int] = mapped_column(Integer)
+    encrypted_password: Mapped[str] = mapped_column(Text)
+    sync_status: Mapped[str] = mapped_column(Text, default="pending")
+    sync_error_msg: Mapped[str | None] = mapped_column(Text)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    filters: Mapped[list["EmailFilter"]] = relationship(back_populates="email_account", cascade="all, delete-orphan")
+
+
+class EmailFilter(Base):
+    __tablename__ = "email_filters"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email_account_id: Mapped[UUID] = mapped_column(ForeignKey("email_accounts.id", ondelete="CASCADE"), nullable=False)
+    require_attachment: Mapped[bool] = mapped_column(Boolean, default=False)
+    sender_keywords: Mapped[str | None] = mapped_column(Text)
+    subject_keywords: Mapped[str | None] = mapped_column(Text)
+    skip_promotions_tab: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    email_account: Mapped[EmailAccount] = relationship(back_populates="filters")
+
+
+class EmailSyncSetting(Base):
+    __tablename__ = "email_sync_settings"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), unique=True, nullable=False)
+    poll_interval_minutes: Mapped[int] = mapped_column(Integer, default=3)
+    auto_extract_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_on_new_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
+    ingestion_approach: Mapped[str] = mapped_column(Text, default="approach_2")
+    trusted_suppliers: Mapped[str] = mapped_column(Text, default="")
+    keyword_filters: Mapped[str] = mapped_column(Text, default="catalog, catalogue, price, offer, quote")
+    pending_approvals: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

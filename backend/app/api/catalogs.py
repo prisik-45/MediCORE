@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 from backend.app.config import get_settings
 from backend.app.db import get_db
 from backend.app.models import CatalogEmail, CatalogItem, Supplier
 from backend.app.seed_mock_catalogs import build_catalogs
+from backend.app.auth import get_current_user
 
 router = APIRouter()
 
@@ -50,11 +52,17 @@ def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
 
 
 @router.get("/emails")
-def list_catalog_emails(db: Session = Depends(get_db), limit: int = Query(25, ge=1, le=100)) -> list[dict]:
+def list_catalog_emails(
+    db: Session = Depends(get_db),
+    limit: int = Query(25, ge=1, le=100),
+    current_user: dict = Depends(get_current_user)
+) -> list[dict]:
     settings = get_settings()
+    user_uuid = UUID(current_user["id"])
     stmt = (
         select(CatalogEmail, Supplier.name)
         .join(Supplier, Supplier.id == CatalogEmail.supplier_id)
+        .where(CatalogEmail.tenant_id == user_uuid)
     )
     if not settings.mock_data_enabled:
         stmt = stmt.where(CatalogEmail.raw_email_id.not_like("core-mock-catalog-%"))
@@ -82,9 +90,15 @@ def list_catalog_items(
     db: Session = Depends(get_db),
     q: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
     settings = get_settings()
-    stmt = select(CatalogItem, Supplier.name).join(Supplier, Supplier.id == CatalogItem.supplier_id)
+    user_uuid = UUID(current_user["id"])
+    stmt = (
+        select(CatalogItem, Supplier.name)
+        .join(Supplier, Supplier.id == CatalogItem.supplier_id)
+        .where(CatalogItem.tenant_id == user_uuid)
+    )
     if not settings.mock_data_enabled:
         source = CatalogItem.raw_payload["source"].astext
         stmt = stmt.where(or_(source.is_(None), source != "mock_extracted_catalogue"))

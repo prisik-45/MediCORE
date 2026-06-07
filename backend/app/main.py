@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.api import catalogs, chat, health, ingestion, suppliers, webhooks
+from backend.app.api import catalogs, chat, health, ingestion, suppliers, webhooks, email_accounts
 from backend.app.config import get_settings
 
 
@@ -52,5 +52,7 @@ app.include_router(suppliers.router, prefix="/api/suppliers", tags=["suppliers"]
 app.include_router(catalogs.router, prefix="/api/catalogs", tags=["catalogs"])
 app.include_router(ingestion.router, prefix="/api/ingestion", tags=["ingestion"])
 app.include_router(chat.router)
+app.include_router(email_accounts.router, prefix="/api/email-accounts", tags=["email-accounts"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+
 

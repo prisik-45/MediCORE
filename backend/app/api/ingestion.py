@@ -1,6 +1,5 @@
-import traceback
-
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.db import get_db
@@ -10,9 +9,24 @@ from backend.app.tasks import poll_inbox
 router = APIRouter()
 
 
+class ImapCredentials(BaseModel):
+    email: str
+    app_password: str = Field(min_length=1)
+    mailbox: str = "INBOX"
+
+
 @router.get("/imap-preview")
 def imap_preview(db: Session = Depends(get_db)) -> dict:
     return EmailIngestionService(db).preview_imap_inbox()
+
+
+@router.post("/imap-preview-with-credentials")
+def imap_preview_with_credentials(payload: ImapCredentials, db: Session = Depends(get_db)) -> dict:
+    return EmailIngestionService(db).preview_imap_inbox(
+        imap_username=payload.email,
+        imap_password=payload.app_password,
+        imap_mailbox=payload.mailbox,
+    )
 
 
 @router.post("/poll-now")
@@ -24,6 +38,16 @@ def poll_now() -> dict[str, str]:
 @router.post("/poll-now-sync")
 def poll_now_sync(db: Session = Depends(get_db)) -> dict[str, int]:
     processed = EmailIngestionService(db).poll_imap_inbox()
+    return {"processed": processed}
+
+
+@router.post("/poll-now-sync-with-credentials")
+def poll_now_sync_with_credentials(payload: ImapCredentials, db: Session = Depends(get_db)) -> dict[str, int]:
+    processed = EmailIngestionService(db).poll_imap_inbox(
+        imap_username=payload.email,
+        imap_password=payload.app_password,
+        imap_mailbox=payload.mailbox,
+    )
     return {"processed": processed}
 
 

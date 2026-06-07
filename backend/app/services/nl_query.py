@@ -19,8 +19,8 @@ class NaturalLanguageQueryEngine:
         self.llm = GroqClient()
         self.ranker = SupplierRanker(db)
 
-    def answer(self, question: str) -> ChatResponse:
-        cache_key = f"chat:answer:v2:{question.strip().lower()}"
+    def answer(self, question: str, tenant_id: Any | None = None) -> ChatResponse:
+        cache_key = f"chat:answer:v3:{tenant_id}:{question.strip().lower()}"
         cached = self._cache_get(cache_key)
         if cached:
             payload = json.loads(cached)
@@ -31,7 +31,7 @@ class NaturalLanguageQueryEngine:
         except Exception:
             plan = self._fallback_plan(question)
         validate_operation(plan.operation)
-        rows = self._execute_plan(plan)
+        rows = self._execute_plan(plan, tenant_id=tenant_id)
         try:
             answer = self.llm.summarize_answer(question, rows)
         except Exception:
@@ -40,13 +40,13 @@ class NaturalLanguageQueryEngine:
         self._cache_set(cache_key, response.model_dump_json())
         return response
 
-    def _execute_plan(self, plan) -> list[dict[str, Any]]:
+    def _execute_plan(self, plan, tenant_id: Any | None = None) -> list[dict[str, Any]]:
         if plan.operation in {"supplier_compare", "best_price", "catalog_search"}:
-            return self.ranker.ranked_items(plan)
+            return self.ranker.ranked_items(plan, tenant_id=tenant_id)
         if plan.operation == "history_compare":
-            return self.ranker.ranked_items(plan)
+            return self.ranker.ranked_items(plan, tenant_id=tenant_id)
         if plan.operation == "supplier_activity":
-            return self.ranker.ranked_items(plan)
+            return self.ranker.ranked_items(plan, tenant_id=tenant_id)
         return []
 
     def _cache_get(self, key: str) -> str | None:

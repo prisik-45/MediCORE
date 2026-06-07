@@ -59,14 +59,7 @@ def is_direct_supabase_url(url: str) -> bool:
 
 
 def build_database_url() -> URL | str:
-    raw_url = settings.database_url.strip()
-    if raw_url and raw_url != DEFAULT_DATABASE_URL and not is_direct_supabase_url(raw_url):
-        return repair_database_url(raw_url)
-
-    pooler_url = build_pooler_url()
-    if pooler_url is not None:
-        return pooler_url
-
+    # First, if direct Supabase host is provided, prioritize it for stable direct connection
     if settings.supabase_db_host and settings.supabase_db_password:
         return URL.create(
             "postgresql+psycopg",
@@ -77,7 +70,16 @@ def build_database_url() -> URL | str:
             database=settings.supabase_db_name,
         )
 
+    raw_url = settings.database_url.strip()
+    if raw_url and raw_url != DEFAULT_DATABASE_URL and not is_direct_supabase_url(raw_url):
+        return repair_database_url(raw_url)
+
+    pooler_url = build_pooler_url()
+    if pooler_url is not None:
+        return pooler_url
+
     return repair_database_url(raw_url)
+
 
 
 def create_app_engine():
