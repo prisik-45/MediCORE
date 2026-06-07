@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import Any
 
 from groq import Groq
 
 from backend.app.config import get_settings
 from backend.app.schemas import ExtractedCatalogItem, QueryPlan
+
+logger = logging.getLogger(__name__)
 
 
 class GroqClient:
@@ -34,7 +37,13 @@ class GroqClient:
             "Normalize medicine/API names to lowercase canonical names. Convert INR/Rs/₹ to INR."
         )
         payload = self._json_chat(system, pdf_text[:30000])
-        return [ExtractedCatalogItem.model_validate(item) for item in payload.get("items", [])]
+        extracted = []
+        for item in payload.get("items", []):
+            try:
+                extracted.append(ExtractedCatalogItem.model_validate(item))
+            except Exception as e:
+                logger.warning("Skipping invalid catalog item: %s. Error: %s", item, e)
+        return extracted
 
     def plan_query(self, question: str) -> QueryPlan:
         system = (

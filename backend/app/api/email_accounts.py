@@ -1,7 +1,7 @@
 import imaplib
 import logging
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
@@ -179,6 +179,7 @@ def list_email_accounts(
 @router.post("", response_model=EmailAccountResponse)
 def save_email_account(
     request: EmailAccountCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -236,7 +237,11 @@ def save_email_account(
         # Trigger an immediate background sync after creation
         try:
             from backend.app.tasks import poll_email_account
-            poll_email_account.delay(str(new_account.id))
+            background_tasks.add_task(poll_email_account, str(new_account.id))
+            try:
+                poll_email_account.delay(str(new_account.id))
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Failed to queue immediate sync for new account {new_account.id}: {e}")
         
@@ -268,6 +273,90 @@ def save_email_account(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while saving the email account: {str(e)}"
+        )
+
+@router.get("/sync-settings", response_model=EmailSyncSettingResponse)
+def get_sync_settings(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Retrieve the global email sync settings for the user, creating a default entry if not found."""
+    user_uuid = UUID(current_user["id"])
+    from backend.app.models import EmailSyncSetting
+    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+    if not settings_row:
+        try:
+            settings_row = EmailSyncSetting(
+                user_id=user_uuid,
+                poll_interval_minutes=15,  # Default to 15 minutes
+                auto_extract_catalog=True,
+                notify_on_new_catalog=True,
+                ingestion_approach="approach_2",
+                trusted_suppliers="",
+                keyword_filters="catalog, catalogue, price, offer, quote",
+                pending_approvals=""
+            )
+            db.add(settings_row)
+            db.commit()
+            db.refresh(settings_row)
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating default sync settings: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not initialize default sync settings."
+            )
+    return settings_row
+
+@router.put("/sync-settings", response_model=EmailSyncSettingResponse)
+def update_sync_settings(
+    request: EmailSyncSettingUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update global sync settings for the user."""
+    user_uuid = UUID(current_user["id"])
+    from backend.app.models import EmailSyncSetting
+    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+    if not settings_row:
+        settings_row = EmailSyncSetting(
+            user_id=user_uuid,
+            ingestion_approach="approach_2",
+            trusted_suppliers="",
+            keyword_filters="catalog, catalogue, price, offer, quote",
+            pending_approvals=""
+        )
+        db.add(settings_row)
+        
+    try:
+        settings_row.poll_interval_minutes = request.poll_interval_minutes
+        settings_row.auto_extract_catalog = request.auto_extract_catalog
+        settings_row.notify_on_new_catalog = request.notify_on_new_catalog
+        settings_row.ingestion_approach = request.ingestion_approach
+        settings_row.trusted_suppliers = request.trusted_suppliers
+        settings_row.keyword_filters = request.keyword_filters
+        settings_row.pending_approvals = request.pending_approvals
+        db.commit()
+        db.refresh(settings_row)
+        
+        # Trigger immediate sync for connected accounts
+        accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
+        from backend.app.tasks import poll_email_account
+        for account in accounts:
+            background_tasks.add_task(poll_email_account, str(account.id))
+            try:
+                poll_email_account.delay(str(account.id))
+            except Exception:
+                pass
+
+        return settings_row
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating sync settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while updating sync settings: {str(e)}"
         )
 
 @router.put("/{account_id}", response_model=EmailAccountResponse)
@@ -411,10 +500,11 @@ def delete_email_account(
 @router.post("/{account_id}/sync", response_model=EmailAccountResponse)
 def trigger_sync_now(
     account_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Triggers an immediate IMAP sync for the specified account in a Celery background task."""
+    """Triggers an immediate IMAP sync for the specified account in a Celery background task or local background thread."""
     user_uuid = UUID(current_user["id"])
     account = db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.user_id == user_uuid).first()
     if not account:
@@ -424,9 +514,13 @@ def trigger_sync_now(
         )
         
     try:
-        # Trigger Celery task
+        # Trigger Celery task + Background task fallback
         from backend.app.tasks import poll_email_account
-        poll_email_account.delay(str(account.id))
+        background_tasks.add_task(poll_email_account, str(account.id))
+        try:
+            poll_email_account.delay(str(account.id))
+        except Exception:
+            pass
         
         # Mark sync as pending so frontend gets positive response immediately
         account.sync_status = "pending"
@@ -462,75 +556,5 @@ def trigger_sync_now(
             detail=f"An error occurred while queueing sync: {str(e)}"
         )
 
-@router.get("/sync-settings", response_model=EmailSyncSettingResponse)
-def get_sync_settings(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """Retrieve the global email sync settings for the user, creating a default entry if not found."""
-    user_uuid = UUID(current_user["id"])
-    from backend.app.models import EmailSyncSetting
-    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
-    if not settings_row:
-        try:
-            settings_row = EmailSyncSetting(
-                user_id=user_uuid,
-                poll_interval_minutes=15,  # Default to 15 minutes
-                auto_extract_catalog=True,
-                notify_on_new_catalog=True,
-                ingestion_approach="approach_2",
-                trusted_suppliers="",
-                keyword_filters="catalog, catalogue, price, offer, quote",
-                pending_approvals=""
-            )
-            db.add(settings_row)
-            db.commit()
-            db.refresh(settings_row)
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error creating default sync settings: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not initialize default sync settings."
-            )
-    return settings_row
 
-@router.put("/sync-settings", response_model=EmailSyncSettingResponse)
-def update_sync_settings(
-    request: EmailSyncSettingUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """Update global sync settings for the user."""
-    user_uuid = UUID(current_user["id"])
-    from backend.app.models import EmailSyncSetting
-    settings_row = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
-    if not settings_row:
-        settings_row = EmailSyncSetting(
-            user_id=user_uuid,
-            ingestion_approach="approach_2",
-            trusted_suppliers="",
-            keyword_filters="catalog, catalogue, price, offer, quote",
-            pending_approvals=""
-        )
-        db.add(settings_row)
-        
-    try:
-        settings_row.poll_interval_minutes = request.poll_interval_minutes
-        settings_row.auto_extract_catalog = request.auto_extract_catalog
-        settings_row.notify_on_new_catalog = request.notify_on_new_catalog
-        settings_row.ingestion_approach = request.ingestion_approach
-        settings_row.trusted_suppliers = request.trusted_suppliers
-        settings_row.keyword_filters = request.keyword_filters
-        settings_row.pending_approvals = request.pending_approvals
-        db.commit()
-        db.refresh(settings_row)
-        return settings_row
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error updating sync settings: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while updating sync settings: {str(e)}"
-        )
 

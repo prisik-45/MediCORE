@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExtractedCatalogItem(BaseModel):
@@ -10,12 +10,30 @@ class ExtractedCatalogItem(BaseModel):
     normalized_name: str | None = None
     price_per_unit: float
     currency: str = "INR"
-    available_qty: float
-    unit: str
+    available_qty: float | None = 0.0
+    unit: str | None = "units"
     valid_until: datetime | None = None
     supplier_sku: str | None = None
     lead_time_days: int | None = None
     notes: str | None = None
+
+    @field_validator("available_qty", mode="before")
+    @classmethod
+    def validate_available_qty(cls, v):
+        if v is None:
+            return 0.0
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def validate_unit(cls, v):
+        if v is None or not str(v).strip():
+            return "units"
+        return str(v)
+
 
 
 class CatalogIngestionResult(BaseModel):

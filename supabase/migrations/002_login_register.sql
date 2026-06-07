@@ -42,6 +42,10 @@ create table if not exists email_sync_settings (
     poll_interval_minutes integer not null default 3,
     auto_extract_catalog boolean not null default true,
     notify_on_new_catalog boolean not null default true,
+    ingestion_approach text not null default 'approach_2',
+    trusted_suppliers text not null default '',
+    keyword_filters text not null default 'catalog, catalogue, price, offer, quote',
+    pending_approvals text not null default '[]',
     created_at timestamptz not null default now()
 );
 

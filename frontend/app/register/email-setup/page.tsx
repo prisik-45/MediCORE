@@ -60,10 +60,22 @@ export default function EmailSetupPage() {
     };
   }, []);
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 
-    (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1"
-      ? "https://backend-production-b29e.up.railway.app"
-      : "http://localhost:8000");
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || (() => {
+    if (typeof window === "undefined") {
+      return "https://backend-production-b29e.up.railway.app";
+    }
+    const hn = window.location.hostname;
+    const isLocal = hn === "localhost" || 
+                    hn === "127.0.0.1" || 
+                    hn === "0.0.0.0" ||
+                    hn.startsWith("192.168.") || 
+                    hn.startsWith("10.") || 
+                    hn.startsWith("172.") ||
+                    hn.endsWith(".local");
+    return isLocal 
+      ? `http://${hn}:8000` 
+      : "https://backend-production-b29e.up.railway.app";
+  })();
 
   async function handleTestConnection() {
     if (!emailAddress || !appPassword) {
@@ -174,7 +186,7 @@ export default function EmailSetupPage() {
         <div className="auth-card-glow"></div>
         <div className="auth-card">
           <div className="auth-brand">
-            <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+            <div className="brand-logo" style={{ background: "transparent", width: "54px", height: "54px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "8px" }}>
               <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
@@ -199,88 +211,86 @@ export default function EmailSetupPage() {
             </div>
           </div>
 
-          <div className="auth-header-text" style={{ textAlign: "center" }}>
-            <h2>Connect Supplier Inbox</h2>
+          <div className="auth-header-text" style={{ textAlign: "center", marginBottom: "20px" }}>
+            <h2>Email Connection</h2>
           </div>
 
           {error && (
             <div className="auth-error-box">
-              <ShieldCheck className="error-icon" />
+              <ShieldCheck className="error-icon" size={16} />
               <span>{error}</span>
             </div>
           )}
 
-          {/* Provider Card Selector */}
+          {/* Provider Card Selector - Redesigned as clean, single-provider badge with theme color */}
           <div className="provider-selector-section">
-            <span className="section-label">Select Provider</span>
-            <div className="provider-cards">
-              <button
-                type="button"
-                className={`provider-card ${provider === "Gmail" ? "selected" : ""}`}
-                onClick={() => setProvider("Gmail")}
-              >
-                <div className="provider-logo-wrap">
-                  <span className="gmail-color-box">M</span>
-                </div>
+            <span className="section-label">Active Provider</span>
+            <div className="provider-integration-badge">
+              <Mail className="provider-badge-icon" size={18} />
+              <div className="provider-badge-info">
                 <strong>Gmail</strong>
-              </button>
+                <span>Secure IMAP Connection</span>
+              </div>
+              <span className="provider-status-dot"></span>
             </div>
-          </div>
-
-          {/* Inline App Password Guide */}
-          <div className="guide-box">
-            <div className="guide-header">
-              <HelpCircle className="guide-icon" />
-              <h3>How to generate a Gmail App Password</h3>
-            </div>
-            <ol className="guide-list">
-              <li>Open your Google Account and turn on <strong>2-Step Verification</strong> in Security settings.</li>
-              <li>Go to <strong>App Passwords</strong> (search for it in your account search bar).</li>
-              <li>Select <strong>Other (Custom name)</strong>, type <strong>MediCORE</strong>, and click <strong>Generate</strong>.</li>
-              <li>Copy the 16-character code and paste it in the App Password field below.</li>
-            </ol>
           </div>
 
           {/* Form */}
           <div className="form-fields">
             <div className="input-group">
-              <label htmlFor="emailAddress">
-                <span>Work Email Address</span>
-                <div className="input-with-icon">
-                  <Mail className="field-icon" />
-                  <input
-                    id="emailAddress"
-                    type="email"
-                    value={emailAddress}
-                    onChange={(e) => setEmailAddress(e.target.value)}
-                    placeholder="sarah@coreconsultancy.com"
-                    required
-                    readOnly
-                    style={{ opacity: 0.8, cursor: "not-allowed", backgroundColor: "#f4f7f5" }}
-                  />
-                </div>
+              <label htmlFor="emailAddress" className="input-label-row">
+                <span>Email Address</span>
               </label>
+              <div className="input-with-icon">
+                <Mail className="field-icon" size={18} />
+                <input
+                  id="emailAddress"
+                  type="email"
+                  value={emailAddress}
+                  onChange={(e) => setEmailAddress(e.target.value)}
+                  placeholder="sarah@coreconsultancy.com"
+                  required
+                  readOnly
+                />
+              </div>
             </div>
 
             <div className="input-group">
-              <label htmlFor="appPassword">
-                <span>Gmail App Password</span>
-                <div className="input-with-icon">
-                  <Key className="field-icon" />
-                  <input
-                    id="appPassword"
-                    type="password"
-                    value={appPassword}
-                    onChange={(e) => {
-                      setAppPassword(e.target.value);
-                      setTestResult(null); // Reset test status when password changes
-                    }}
-                    placeholder="xxxx xxxx xxxx xxxx"
-                    required
-                  />
-                </div>
+              <label htmlFor="appPassword" className="input-label-row">
+                <span>App Password</span>
               </label>
+              <div className="input-with-icon">
+                <Key className="field-icon" size={18} />
+                <input
+                  id="appPassword"
+                  type="password"
+                  value={appPassword}
+                  onChange={(e) => {
+                    setAppPassword(e.target.value);
+                    setTestResult(null); // Reset test status when password changes
+                  }}
+                  placeholder="xxxx xxxx xxxx xxxx"
+                  required
+                />
+              </div>
             </div>
+
+            {/* Inline App Password Guide - Collapsible details accordion */}
+            <details className="guide-accordion">
+              <summary className="guide-summary">
+                <HelpCircle className="guide-summary-icon" size={14} />
+                <span>How to generate an App Password?</span>
+                <ChevronDown className="guide-chevron" size={14} />
+              </summary>
+              <div className="guide-content">
+                <ol className="guide-list">
+                  <li>Turn on <strong>2-Step Verification</strong> in Google Security settings.</li>
+                  <li>Search for <strong>App Passwords</strong> in your Google Account.</li>
+                  <li>Select <strong>Other (Custom name)</strong>, type <strong>MediCORE</strong>, and generate.</li>
+                  <li>Copy the 16-character code and paste it above.</li>
+                </ol>
+              </div>
+            </details>
 
             {/* Collapsible Filters Section */}
             <div className="collapsible-section">
@@ -290,17 +300,17 @@ export default function EmailSetupPage() {
                 onClick={() => setShowFilters(!showFilters)}
               >
                 <div className="trigger-label">
-                  <Sliders className="trigger-icon" />
-                  <span>Configure Email Filters (Optional)</span>
+                  <Sliders className="trigger-icon" size={16} />
+                  <span>Email Filters</span>
                 </div>
-                {showFilters ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                {showFilters ? <ChevronUp size={16} className="trigger-chevron" /> : <ChevronDown size={16} className="trigger-chevron" />}
               </button>
 
               {showFilters && (
                 <div className="collapsible-content">
                   <div className="filter-toggle-row">
                     <label className="toggle-label" htmlFor="requireAttachment">
-                      <strong>Require Attachments (PDFs)</strong>
+                      <strong>Require Attachments</strong>
                       <span>Only parse emails containing PDF supplier documents</span>
                     </label>
                     <input
@@ -314,8 +324,8 @@ export default function EmailSetupPage() {
 
                   <div className="filter-toggle-row">
                     <label className="toggle-label" htmlFor="skipPromotions">
-                      <strong>Skip Promotions Tab</strong>
-                      <span>Ignore emails flagged as Gmail newsletters / promotions</span>
+                      <strong>Skip Promotions</strong>
+                      <span>Ignore emails flagged as newsletters or promotions</span>
                     </label>
                     <input
                       id="skipPromotions"
@@ -327,27 +337,31 @@ export default function EmailSetupPage() {
                   </div>
 
                   <div className="input-group">
-                    <label htmlFor="subjectKeywords">
-                      <span>Subject Keywords Filter (Comma separated)</span>
+                    <label htmlFor="subjectKeywords" className="input-label-row">
+                      <span>Subject Keywords</span>
+                    </label>
+                    <div className="input-simple">
                       <input
                         id="subjectKeywords"
                         value={subjectKeywords}
                         onChange={(e) => setSubjectKeywords(e.target.value)}
                         placeholder="catalog, catalogue, price list"
                       />
-                    </label>
+                    </div>
                   </div>
 
                   <div className="input-group">
-                    <label htmlFor="senderKeywords">
-                      <span>Sender Email Keywords (Comma separated)</span>
+                    <label htmlFor="senderKeywords" className="input-label-row">
+                      <span>Sender Keywords</span>
+                    </label>
+                    <div className="input-simple">
                       <input
                         id="senderKeywords"
                         value={senderKeywords}
                         onChange={(e) => setSenderKeywords(e.target.value)}
                         placeholder="supplier, pharma, chemical"
                       />
-                    </label>
+                    </div>
                   </div>
                 </div>
               )}
@@ -358,7 +372,7 @@ export default function EmailSetupPage() {
               <div className={`test-feedback-box ${testResult.success ? "success" : "failed"}`}>
                 {testResult.success ? (
                   <>
-                    <CheckCircle2 className="feedback-icon text-green" />
+                    <CheckCircle2 className="feedback-icon" size={18} />
                     <div className="feedback-text">
                       <strong>Connection Succeeded</strong>
                       <p>{testResult.message}</p>
@@ -366,7 +380,7 @@ export default function EmailSetupPage() {
                   </>
                 ) : (
                   <>
-                    <XCircle className="feedback-icon text-red" />
+                    <XCircle className="feedback-icon" size={18} />
                     <div className="feedback-text">
                       <strong>Connection Failed</strong>
                       <p>{testResult.message}</p>
@@ -431,7 +445,7 @@ export default function EmailSetupPage() {
         .auth-card-wrapper {
           position: relative;
           width: 100%;
-          max-width: 500px;
+          max-width: 480px;
         }
 
         .auth-card-glow {
@@ -440,19 +454,20 @@ export default function EmailSetupPage() {
           left: -20px;
           right: -20px;
           bottom: -20px;
-          background: radial-gradient(circle, rgba(15, 122, 95, 0.08) 0%, transparent 70%);
-          filter: blur(10px);
+          background: radial-gradient(circle, rgba(15, 122, 95, 0.05) 0%, transparent 60%);
+          filter: blur(12px);
           z-index: 0;
           pointer-events: none;
         }
 
         .auth-card {
           position: relative;
-          background: #ffffff;
-          border: 1px solid #dce4df;
-          border-radius: 20px;
-          padding: 40px;
-          box-shadow: 0 10px 30px rgba(23, 33, 28, 0.06), 0 1px 3px rgba(23, 33, 28, 0.02);
+          background: rgba(255, 255, 255, 0.9);
+          backdrop-filter: blur(16px);
+          border: 1px solid rgba(15, 122, 95, 0.12);
+          border-radius: 24px;
+          padding: 36px;
+          box-shadow: 0 20px 40px rgba(15, 122, 95, 0.04), 0 1px 3px rgba(15, 122, 95, 0.02);
           z-index: 1;
         }
 
@@ -465,22 +480,12 @@ export default function EmailSetupPage() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 48px;
-          height: 48px;
-          background: rgba(15, 122, 95, 0.1);
-          color: #0f7a5f;
-          border-radius: 12px;
-          margin-bottom: 12px;
-        }
-
-        .brand-icon {
-          width: 24px;
-          height: 24px;
+          margin-bottom: 8px;
         }
 
         .auth-brand h1 {
           margin: 0;
-          font-size: 26px;
+          font-size: 24px;
           font-weight: 800;
           color: #0f7a5f;
           letter-spacing: -0.5px;
@@ -488,7 +493,7 @@ export default function EmailSetupPage() {
 
         .brand-tagline {
           margin: 4px 0 0;
-          font-size: 12px;
+          font-size: 11px;
           color: #66736d;
           font-weight: 500;
           letter-spacing: 0.5px;
@@ -500,7 +505,7 @@ export default function EmailSetupPage() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 32px;
+          margin-bottom: 28px;
           padding: 0 10px;
         }
 
@@ -513,13 +518,13 @@ export default function EmailSetupPage() {
         }
 
         .step-circle {
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
           border-radius: 50%;
           border: 2px solid #dce4df;
           background: #ffffff;
           color: #66736d;
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 700;
           display: flex;
           align-items: center;
@@ -528,7 +533,7 @@ export default function EmailSetupPage() {
         }
 
         .step span {
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 600;
           color: #66736d;
           text-align: center;
@@ -548,7 +553,7 @@ export default function EmailSetupPage() {
 
         .step.completed .step-circle {
           border-color: #0f7a5f;
-          background: rgba(15, 122, 95, 0.1);
+          background: rgba(15, 122, 95, 0.08);
           color: #0f7a5f;
         }
 
@@ -560,48 +565,37 @@ export default function EmailSetupPage() {
           flex: 1;
           height: 2px;
           background: #dce4df;
-          margin-bottom: 22px;
+          margin-bottom: 20px;
         }
 
         .step-line.completed {
           background: #0f7a5f;
         }
 
-        .auth-header-text {
-          margin-bottom: 24px;
-        }
-
         .auth-header-text h2 {
           margin: 0;
-          font-size: 20px;
+          font-size: 18px;
           font-weight: 700;
           color: #17211c;
         }
 
-        .auth-header-text p {
-          margin: 4px 0 0;
-          font-size: 14px;
-          color: #66736d;
-        }
-
         .auth-error-box {
-          background: #fdf2f2;
-          border: 1px solid #fde8e8;
-          border-radius: 8px;
+          background: var(--soft);
+          border: 1px solid var(--line);
+          color: var(--ink);
           padding: 12px 16px;
           display: flex;
           align-items: flex-start;
           gap: 10px;
           margin-bottom: 24px;
-          color: #9b1c1c;
-          font-size: 14px;
+          font-size: 13px;
+          border-radius: 12px;
         }
 
         .error-icon {
           flex-shrink: 0;
-          margin-top: 2px;
-          width: 16px;
-          height: 16px;
+          margin-top: 1px;
+          color: #0f7a5f;
         }
 
         .provider-selector-section {
@@ -610,86 +604,135 @@ export default function EmailSetupPage() {
 
         .section-label {
           display: block;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.5px;
           color: #66736d;
-          margin-bottom: 10px;
+          margin-bottom: 8px;
         }
 
-        .provider-cards {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 12px;
-        }
-
-        .provider-card {
+        .provider-integration-badge {
           display: flex;
           align-items: center;
-          gap: 12px;
-          padding: 14px;
-          border: 2px solid #0f7a5f;
-          border-radius: 12px;
-          background: rgba(15, 122, 95, 0.04);
-          cursor: pointer;
-          transition: all 0.2s;
-          text-align: left;
-          outline: none;
+          gap: 14px;
+          padding: 14px 18px;
+          border: 1px solid rgba(15, 122, 95, 0.15);
+          border-radius: 14px;
+          background: rgba(15, 122, 95, 0.03);
+          position: relative;
+          overflow: hidden;
         }
 
-        .provider-logo-wrap {
-          width: 32px;
-          height: 32px;
-          background: #ea4335;
-          color: #ffffff;
-          border-radius: 6px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 800;
-          font-size: 18px;
-        }
-
-        .provider-card strong {
-          font-size: 15px;
-          color: #17211c;
-        }
-
-        /* Guide box */
-        .guide-box {
-          background: #fafcfb;
-          border: 1px solid #dce4df;
+        .provider-badge-icon {
+          color: #0f7a5f;
+          background: rgba(15, 122, 95, 0.08);
+          padding: 8px;
           border-radius: 10px;
-          padding: 16px;
-          margin-bottom: 24px;
+          box-sizing: content-box;
         }
 
-        .guide-header {
+        .provider-badge-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .provider-badge-info strong {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--ink);
+        }
+
+        .provider-badge-info span {
+          font-size: 11px;
+          color: #66736d;
+        }
+
+        .provider-status-dot {
+          position: absolute;
+          right: 18px;
+          width: 8px;
+          height: 8px;
+          background: #0f7a5f;
+          border-radius: 50%;
+          box-shadow: 0 0 0 4px rgba(15, 122, 95, 0.15);
+          animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+          0% {
+            box-shadow: 0 0 0 0 rgba(15, 122, 95, 0.35);
+          }
+          70% {
+            box-shadow: 0 0 0 6px rgba(15, 122, 95, 0);
+          }
+          100% {
+            box-shadow: 0 0 0 0 rgba(15, 122, 95, 0);
+          }
+        }
+
+        /* Guide Accordion */
+        .guide-accordion {
+          border: 1px solid var(--line);
+          border-radius: 12px;
+          background: var(--soft);
+          margin-bottom: 4px;
+          overflow: hidden;
+          transition: all 0.3s ease;
+        }
+
+        .guide-accordion[open] {
+          border-color: rgba(15, 122, 95, 0.2);
+          background: #ffffff;
+          box-shadow: 0 4px 12px rgba(15, 122, 95, 0.02);
+        }
+
+        .guide-summary {
           display: flex;
           align-items: center;
           gap: 8px;
-          margin-bottom: 10px;
+          padding: 12px 16px;
+          cursor: pointer;
+          user-select: none;
+          font-size: 13px;
+          font-weight: 600;
+          color: #0f7a5f;
+          list-style: none;
+        }
+
+        .guide-summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .guide-summary-icon {
+          flex-shrink: 0;
           color: #0f7a5f;
         }
 
-        .guide-icon {
-          width: 18px;
-          height: 18px;
-          flex-shrink: 0;
+        .guide-summary span {
+          flex-grow: 1;
         }
 
-        .guide-header h3 {
-          margin: 0;
-          font-size: 14px;
-          font-weight: 700;
+        .guide-chevron {
+          transition: transform 0.25s ease;
+          color: #66736d;
+        }
+
+        .guide-accordion[open] .guide-chevron {
+          transform: rotate(180deg);
+        }
+
+        .guide-content {
+          padding: 0 16px 14px 16px;
+          border-top: 1px solid rgba(15, 122, 95, 0.08);
         }
 
         .guide-list {
-          margin: 0;
+          margin: 10px 0 0 0;
           padding-left: 20px;
-          font-size: 12px;
-          line-height: 1.5;
+          font-size: 11px;
+          line-height: 1.6;
           color: #66736d;
         }
 
@@ -697,100 +740,140 @@ export default function EmailSetupPage() {
           margin-bottom: 6px;
         }
 
+        .guide-list li strong {
+          color: #17211c;
+        }
+
         .form-fields {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 16px;
         }
 
-        .input-group label span {
-          display: block;
+        .input-group {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .input-label-row {
           font-size: 13px;
           font-weight: 600;
           color: #17211c;
-          margin-bottom: 8px;
         }
 
         .input-with-icon {
           position: relative;
+          display: flex;
+          align-items: center;
         }
 
         .field-icon {
           position: absolute;
-          left: 14px;
-          top: 50%;
-          transform: translateY(-50%);
+          left: 16px;
           color: #66736d;
-          width: 18px;
-          height: 18px;
+          transition: color 0.2s ease;
         }
 
-        .input-with-icon input,
-        .collapsible-content input {
-          width: 100%;
-          height: 48px;
-          padding: 0 16px 0 44px;
-          border: 1px solid #dce4df;
-          border-radius: 10px;
-          font-size: 14px;
-          color: #17211c;
-          background: #fafcfb;
-          outline: none;
-          transition: all 0.2s;
+        .input-with-icon input {
+          width: 100% !important;
+          height: 48px !important;
+          padding: 0 16px 0 48px !important;
+          border: 1px solid #dce4df !important;
+          border-radius: 12px !important;
+          font-size: 14px !important;
+          color: #17211c !important;
+          background: #fafcfb !important;
+          outline: none !important;
+          transition: all 0.2s ease !important;
         }
 
-        .collapsible-content input {
-          padding: 0 16px; /* No icon in filter inputs */
+        .input-with-icon input:focus {
+          border-color: #0f7a5f !important;
+          background: #ffffff !important;
+          box-shadow: 0 0 0 3px rgba(15, 122, 95, 0.08) !important;
         }
 
-        .input-with-icon input:focus,
-        .collapsible-content input:focus {
-          border-color: #0f7a5f;
-          background: #ffffff;
-          box-shadow: 0 0 0 3px rgba(15, 122, 95, 0.08);
+        .input-with-icon input:focus + .field-icon {
+          color: #0f7a5f !important;
         }
 
-        /* Collapsible section styling */
+        .input-with-icon input[readonly] {
+          background: rgba(220, 228, 223, 0.25) !important;
+          border-color: #dce4df !important;
+          color: #66736d !important;
+          cursor: not-allowed !important;
+          opacity: 0.8 !important;
+        }
+
+        .input-simple input {
+          width: 100% !important;
+          height: 48px !important;
+          padding: 0 16px !important;
+          border: 1px solid #dce4df !important;
+          border-radius: 12px !important;
+          font-size: 14px !important;
+          color: #17211c !important;
+          background: #fafcfb !important;
+          outline: none !important;
+          transition: all 0.2s ease !important;
+        }
+
+        .input-simple input:focus {
+          border-color: #0f7a5f !important;
+          background: #ffffff !important;
+          box-shadow: 0 0 0 3px rgba(15, 122, 95, 0.08) !important;
+        }
+
+        /* Collapsible Advanced Section */
         .collapsible-section {
           border: 1px solid #dce4df;
-          border-radius: 10px;
+          border-radius: 14px;
           overflow: hidden;
           background: #ffffff;
+          transition: all 0.2s ease;
+        }
+
+        .collapsible-section:hover {
+          border-color: rgba(15, 122, 95, 0.2);
         }
 
         .collapsible-trigger {
-          width: 100%;
-          padding: 14px 16px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          background: #fafcfb;
-          border: none;
-          color: #17211c;
-          cursor: pointer;
-          transition: background 0.2s;
+          width: 100% !important;
+          padding: 14px 20px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          background: #ffffff !important;
+          border: none !important;
+          color: #17211c !important;
+          cursor: pointer !important;
+          transition: all 0.2s ease !important;
         }
 
         .collapsible-trigger:hover {
-          background: #f4f7f5;
+          background: #fafcfb !important;
         }
 
         .trigger-label {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          font-size: 13px;
-          font-weight: 600;
+          display: flex !important;
+          align-items: center !important;
+          gap: 10px !important;
+          font-size: 13px !important;
+          font-weight: 600 !important;
+          color: #17211c !important;
         }
 
         .trigger-icon {
-          width: 16px;
-          height: 16px;
-          color: #0f7a5f;
+          color: #0f7a5f !important;
+        }
+
+        .trigger-chevron {
+          color: #66736d !important;
         }
 
         .collapsible-content {
-          padding: 20px 16px;
+          padding: 18px 20px;
           border-top: 1px solid #dce4df;
           display: flex;
           flex-direction: column;
@@ -807,6 +890,11 @@ export default function EmailSetupPage() {
           border-bottom: 1px dashed #dce4df;
         }
 
+        .filter-toggle-row:last-of-type {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+
         .toggle-label {
           display: flex;
           flex-direction: column;
@@ -816,93 +904,105 @@ export default function EmailSetupPage() {
         .toggle-label strong {
           font-size: 13px;
           color: #17211c;
+          font-weight: 600;
         }
 
         .toggle-label span {
           font-size: 11px;
           color: #66736d;
+          line-height: 1.4;
         }
 
-        /* Custom switch styling */
+        /* Premium Switch */
         .ios-switch {
-          position: relative;
-          width: 44px;
-          height: 24px;
-          appearance: none;
-          background: #dce4df;
-          outline: none;
-          border-radius: 20px;
-          cursor: pointer;
-          transition: background 0.3s;
+          position: relative !important;
+          width: 44px !important;
+          height: 24px !important;
+          display: inline-block !important;
+          flex-shrink: 0 !important;
+          appearance: none !important;
+          background: #dce4df !important;
+          border: none !important;
+          outline: none !important;
+          border-radius: 20px !important;
+          cursor: pointer !important;
+          transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+          box-sizing: border-box !important;
+          padding: 0 !important;
+          margin: 0 !important;
         }
 
         .ios-switch:checked {
-          background: #0f7a5f;
+          background: #0f7a5f !important;
         }
 
         .ios-switch::before {
-          content: "";
-          position: absolute;
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          top: 2px;
-          left: 2px;
-          background: #ffffff;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-          transition: transform 0.3s;
+          content: "" !important;
+          position: absolute !important;
+          width: 18px !important;
+          height: 18px !important;
+          border-radius: 50% !important;
+          top: 3px !important;
+          left: 3px !important;
+          background: #ffffff !important;
+          box-shadow: 0 2px 4px rgba(23, 33, 28, 0.15) !important;
+          transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+          border: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
         }
 
         .ios-switch:checked::before {
-          transform: translateX(20px);
+          transform: translateX(20px) !important;
         }
 
-        /* Test feedback box */
+        /* Test Feedback Box */
         .test-feedback-box {
           display: flex;
           align-items: flex-start;
           gap: 12px;
-          padding: 16px;
-          border-radius: 10px;
+          padding: 14px 16px;
+          border-radius: 12px;
           font-size: 13px;
-          line-height: 1.4;
+          line-height: 1.45;
+          transition: all 0.3s ease;
         }
 
         .test-feedback-box.success {
-          background: #ecfdf5;
-          border: 1px solid #a7f3d0;
-          color: #065f46;
+          background: rgba(15, 122, 95, 0.04);
+          border: 1px solid rgba(15, 122, 95, 0.18);
+          color: #0f7a5f;
         }
 
         .test-feedback-box.failed {
-          background: #fdf2f2;
-          border: 1px solid #fde8e8;
-          color: #9b1c1c;
+          background: #fafcfb;
+          border: 1px solid #dce4df;
+          color: #17211c;
         }
 
         .feedback-icon {
-          width: 18px;
-          height: 18px;
+          margin-top: 2px;
           flex-shrink: 0;
-          margin-top: 1px;
         }
 
-        .text-green {
-          color: #10b981;
+        .test-feedback-box.failed .feedback-icon {
+          color: #66736d;
         }
 
-        .text-red {
-          color: #ef4444;
+        .feedback-text {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
         }
 
         .feedback-text strong {
-          display: block;
-          margin-bottom: 2px;
           font-weight: 700;
+          font-size: 13px;
         }
 
         .feedback-text p {
           margin: 0;
+          opacity: 0.85;
         }
 
         /* Buttons layout */
@@ -910,55 +1010,55 @@ export default function EmailSetupPage() {
           display: grid;
           grid-template-columns: 1fr 1.2fr;
           gap: 12px;
-          margin-top: 8px;
+          margin-top: 6px;
         }
 
         .btn-test-connection {
-          height: 48px;
-          border: 1px solid #0f7a5f;
-          background: #ffffff;
-          color: #0f7a5f;
-          border-radius: 10px;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          height: 48px !important;
+          border: 1px solid #0f7a5f !important;
+          background: #ffffff !important;
+          color: #0f7a5f !important;
+          border-radius: 12px !important;
+          font-size: 14px !important;
+          font-weight: 600 !important;
+          cursor: pointer !important;
+          transition: all 0.2s ease !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
         }
 
         .btn-test-connection:hover:not(:disabled) {
-          background: rgba(15, 122, 95, 0.05);
-          box-shadow: 0 2px 6px rgba(15, 122, 95, 0.1);
+          background: rgba(15, 122, 95, 0.04) !important;
+          box-shadow: 0 4px 12px rgba(15, 122, 95, 0.05) !important;
         }
 
         .btn-save-credentials {
-          height: 48px;
-          background: #0f7a5f;
-          color: #ffffff;
-          border: none;
-          border-radius: 10px;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
+          height: 48px !important;
+          background: #0f7a5f !important;
+          color: #ffffff !important;
+          border: none !important;
+          border-radius: 12px !important;
+          font-size: 14px !important;
+          font-weight: 600 !important;
+          cursor: pointer !important;
+          transition: all 0.2s ease !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          gap: 6px !important;
         }
 
         .btn-save-credentials:hover:not(:disabled) {
-          background: #0d6a50;
-          box-shadow: 0 4px 12px rgba(15, 122, 95, 0.2);
+          background: #0d6a50 !important;
+          box-shadow: 0 6px 18px rgba(15, 122, 95, 0.15) !important;
         }
 
         .btn-test-connection:disabled,
         .btn-save-credentials:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-          box-shadow: none;
+          opacity: 0.45 !important;
+          cursor: not-allowed !important;
+          box-shadow: none !important;
         }
 
         .animate-spin {

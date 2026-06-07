@@ -24,7 +24,7 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -95,20 +95,6 @@ type AuthUser = {
   organisation?: string;
 };
 
-type GmailSettings = {
-  email: string;
-  appPassword: string;
-  mailbox: string;
-  autoPoll: boolean;
-};
-
-type GmailPreviewResponse = {
-  unread_count?: number;
-  pdf_message_count?: number;
-  mailbox?: string;
-  pdf_messages?: Array<{ subject?: string | null; pdf_attachments?: string[] }>;
-};
-
 type EmailFilter = {
   id?: string;
   require_attachment: boolean;
@@ -143,16 +129,6 @@ type EmailSyncSetting = {
   pending_approvals?: string;
 };
 
-
-const AUTH_STORAGE_KEY = "medicore-auth-user";
-const GMAIL_SETTINGS_STORAGE_KEY = "medicore-gmail-settings";
-
-const defaultGmailSettings: GmailSettings = {
-  email: "",
-  appPassword: "",
-  mailbox: "INBOX",
-  autoPoll: false,
-};
 
 const exampleQuestions = [
   "Which supplier has the best price for ascorbic acid with 20,000+ units available?",
@@ -276,6 +252,7 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [supplierRows, setSupplierRows] = useState<SupplierTableRow[]>([]);
   const [catalogEmails, setCatalogEmails] = useState<CatalogEmailRow[]>([]);
+  const [supplierMetaRows, setSupplierMetaRows] = useState<SupplierApiRow[]>([]);
   const [supplierLoading, setSupplierLoading] = useState(true);
   const [supplierError, setSupplierError] = useState<string | null>(null);
   const [selectedInboxSupplier, setSelectedInboxSupplier] = useState("");
@@ -290,12 +267,6 @@ export default function Home() {
   const [compareSort, setCompareSort] = useState<CompareSort>("best-value");
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginName, setLoginName] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [gmailSettings, setGmailSettings] = useState<GmailSettings>(defaultGmailSettings);
-  const [settingsStatus, setSettingsStatus] = useState("");
-  const [settingsBusy, setSettingsBusy] = useState(false);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
 
   // Settings Redesign States
@@ -372,6 +343,12 @@ export default function Home() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
+
+
+
+
+
+
   const [syncingAccountsState, setSyncingAccountsState] = useState<Record<string, boolean>>({});
   const socketRef = useRef<WebSocket | null>(null);
   const productionApiBaseUrl = "https://backend-production-b29e.up.railway.app";
@@ -386,8 +363,18 @@ export default function Home() {
       return productionApiBaseUrl;
     }
 
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return `${window.location.protocol}//${window.location.hostname}:8000`;
+    const hn = window.location.hostname;
+    const isLocal = hn === "localhost" || 
+                    hn === "127.0.0.1" || 
+                    hn === "0.0.0.0" ||
+                    hn.startsWith("192.168.") || 
+                    hn.startsWith("10.") || 
+                    hn.startsWith("172.") ||
+                    hn.endsWith(".local");
+
+    if (isLocal) {
+      const targetHost = hn === "localhost" ? "127.0.0.1" : hn;
+      return `${window.location.protocol}//${targetHost}:8000`;
     }
 
     return productionApiBaseUrl;
@@ -401,9 +388,19 @@ export default function Home() {
       return productionWsUrl;
     }
 
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    const hn = window.location.hostname;
+    const isLocal = hn === "localhost" || 
+                    hn === "127.0.0.1" || 
+                    hn === "0.0.0.0" ||
+                    hn.startsWith("192.168.") || 
+                    hn.startsWith("10.") || 
+                    hn.startsWith("172.") ||
+                    hn.endsWith(".local");
+
+    if (isLocal) {
+      const targetHost = hn === "localhost" ? "127.0.0.1" : hn;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      return `${protocol}://${window.location.hostname}:8000/ws/chat`;
+      return `${protocol}://${targetHost}:8000/ws/chat`;
     }
 
     return productionWsUrl;
@@ -413,6 +410,7 @@ export default function Home() {
   const inboxThreads = useMemo<InboxThread[]>(() => {
     const grouped = new Map<string, SupplierTableRow[]>();
     const emailBySupplier = new Map<string, CatalogEmailRow[]>();
+    const supplierMeta = new Map(supplierMetaRows.map((supplier) => [supplier.name, supplier]));
 
     for (const email of catalogEmails) {
       const current = emailBySupplier.get(email.supplier_name) ?? [];
@@ -426,20 +424,29 @@ export default function Home() {
       grouped.set(row.supplier_name, current);
     }
 
-    return Array.from(grouped.entries())
-      .map(([supplierName, items]) => {
+    const supplierNames = new Set([...grouped.keys(), ...emailBySupplier.keys()]);
+
+    return Array.from(supplierNames)
+      .map((supplierName) => {
+        const items = grouped.get(supplierName) ?? [];
         const sortedItems = [...items].sort((left, right) => left.price_per_unit - right.price_per_unit);
-        const averageReliability = items.reduce((total, item) => total + item.reliability_score, 0) / items.length;
+        const meta = supplierMeta.get(supplierName);
+        const averageReliability = items.length
+          ? items.reduce((total, item) => total + item.reliability_score, 0) / items.length
+          : meta?.reliability_score ?? 50;
         const bestItem = sortedItems[0];
         const latestEmail = (emailBySupplier.get(supplierName) ?? []).slice().sort((left, right) => {
           return new Date(right.received_at).getTime() - new Date(left.received_at).getTime();
         })[0];
-        const receivedAt = latestEmail?.received_at ?? items[0]?.valid_until ?? null;
+        const receivedAt = latestEmail?.received_at ?? items[0]?.valid_until ?? meta?.last_email_date ?? null;
         const ageMinutes = receivedAt ? Math.max(0, Math.round((Date.now() - new Date(receivedAt).getTime()) / 60000)) : 0;
-        const statusTone: InboxThread["status_tone"] =
-          ageMinutes < 90 ? "pending" : averageReliability >= 88 ? "processed" : averageReliability >= 78 ? "review" : "pending";
-        const statusLabel =
-          ageMinutes < 60
+        const hasExtractedItems = sortedItems.length > 0;
+        const statusTone: InboxThread["status_tone"] = !hasExtractedItems
+          ? "pending"
+          : ageMinutes < 90 ? "pending" : averageReliability >= 88 ? "processed" : averageReliability >= 78 ? "review" : "pending";
+        const statusLabel = !hasExtractedItems
+          ? latestEmail?.processing_status === "completed" ? "Stored" : "Extracting"
+          : ageMinutes < 60
             ? "Extracting"
             : averageReliability >= 88
               ? "Processed"
@@ -449,11 +456,11 @@ export default function Home() {
 
         return {
           supplier_name: supplierName,
-          email_domain: items[0]?.email_domain ?? "-",
+          email_domain: items[0]?.email_domain ?? meta?.email_domain ?? "-",
           reliability_score: averageReliability,
           item_count: items.length,
-          latest_item: latestEmail?.subject || bestItem?.normalized_name || bestItem?.ingredient_name || "-",
-          received_at: latestEmail?.received_at ?? null,
+          latest_item: latestEmail?.subject || bestItem?.normalized_name || bestItem?.ingredient_name || "Email stored, extraction pending",
+          received_at: latestEmail?.received_at ?? meta?.last_email_date ?? null,
           latest_price: bestItem?.price_per_unit ?? 0,
           latest_currency: bestItem?.currency ?? "INR",
           latest_qty: bestItem?.available_qty ?? 0,
@@ -463,8 +470,12 @@ export default function Home() {
           items: sortedItems,
         };
       })
-      .sort((left, right) => right.item_count - left.item_count || left.supplier_name.localeCompare(right.supplier_name));
-  }, [catalogEmails, supplierRows]);
+      .sort((left, right) => {
+        const leftTime = new Date(left.received_at ?? 0).getTime();
+        const rightTime = new Date(right.received_at ?? 0).getTime();
+        return rightTime - leftTime || right.item_count - left.item_count || left.supplier_name.localeCompare(right.supplier_name);
+      });
+  }, [catalogEmails, supplierMetaRows, supplierRows]);
 
   const selectedInboxThread = useMemo(() => {
     if (!inboxThreads.length) {
@@ -476,7 +487,10 @@ export default function Home() {
   const assistantRows = rows as Array<Record<string, unknown>>;
 
   const dashboardData = useMemo(() => {
-    const suppliers = new Set(supplierRows.map((row) => row.supplier_name));
+    const suppliers = new Set([
+      ...supplierRows.map((row) => row.supplier_name),
+      ...catalogEmails.map((email) => email.supplier_name),
+    ]);
     const completedCatalogs = catalogEmails.filter((email) => email.processing_status === "completed").length;
     const averageReliability = supplierRows.length
       ? supplierRows.reduce((total, row) => total + row.reliability_score, 0) / supplierRows.length
@@ -507,7 +521,9 @@ export default function Home() {
     const potentialSavings = deals.reduce((total, deal) => total + deal.savingValue, 0);
     const activities = inboxThreads.slice(0, 5).map((thread, index) => ({
       tone: index === 2 ? "warning" : index % 2 === 0 ? "strong" : "soft",
-      text: `${thread.supplier_name} sent catalogue - ${thread.item_count} items extracted`,
+      text: thread.item_count > 0
+        ? `${thread.supplier_name} sent catalogue - ${thread.item_count} items extracted`
+        : `${thread.supplier_name} sent catalogue email - extraction pending`,
       time: formatRelativeTime(thread.received_at),
     }));
 
@@ -526,28 +542,43 @@ export default function Home() {
 
   const supplierDirectory = useMemo(() => {
     const supplierMap = new Map<string, SupplierTableRow[]>();
+    const emailBySupplier = new Map<string, CatalogEmailRow[]>();
+    const supplierMeta = new Map(supplierMetaRows.map((supplier) => [supplier.name, supplier]));
+
     for (const row of supplierRows) {
       const current = supplierMap.get(row.supplier_name) ?? [];
       current.push(row);
       supplierMap.set(row.supplier_name, current);
     }
 
-    const emailBySupplier = new Map(catalogEmails.map((email) => [email.supplier_name, email]));
+    for (const email of catalogEmails) {
+      const current = emailBySupplier.get(email.supplier_name) ?? [];
+      current.push(email);
+      emailBySupplier.set(email.supplier_name, current);
+    }
+
+    const supplierNames = new Set([...supplierMap.keys(), ...emailBySupplier.keys()]);
     const search = supplierSearch.trim().toLowerCase();
-    const summaries = Array.from(supplierMap.entries()).map(([supplierName, items]) => {
+    const summaries = Array.from(supplierNames).map((supplierName) => {
+      const items = supplierMap.get(supplierName) ?? [];
       const sortedByPrice = [...items].sort((left, right) => left.price_per_unit - right.price_per_unit);
-      const latestEmail = emailBySupplier.get(supplierName);
-      const avgReliability = items.reduce((total, item) => total + item.reliability_score, 0) / items.length;
+      const latestEmail = (emailBySupplier.get(supplierName) ?? []).slice().sort((left, right) => {
+        return new Date(right.received_at).getTime() - new Date(left.received_at).getTime();
+      })[0];
+      const meta = supplierMeta.get(supplierName);
+      const avgReliability = items.length
+        ? items.reduce((total, item) => total + item.reliability_score, 0) / items.length
+        : meta?.reliability_score ?? 50;
       const totalQty = items.reduce((total, item) => total + item.available_qty, 0);
       return {
         supplier_name: supplierName,
-        email_domain: items[0]?.email_domain ?? "-",
+        email_domain: items[0]?.email_domain ?? meta?.email_domain ?? "-",
         reliability_score: avgReliability,
         item_count: items.length,
         best_item: sortedByPrice[0],
         total_qty: totalQty,
-        last_catalog_at: latestEmail?.received_at ?? items[0]?.valid_until ?? null,
-        subject: latestEmail?.subject ?? "Mock catalogue",
+        last_catalog_at: latestEmail?.received_at ?? items[0]?.valid_until ?? meta?.last_email_date ?? null,
+        subject: latestEmail?.subject ?? "Catalogue email received",
         items: sortedByPrice,
       };
     }).filter((supplier) => {
@@ -563,7 +594,7 @@ export default function Home() {
       if (supplierSort === "items") return right.item_count - left.item_count;
       return new Date(right.last_catalog_at ?? 0).getTime() - new Date(left.last_catalog_at ?? 0).getTime();
     });
-  }, [catalogEmails, supplierRows, supplierSearch, supplierSort]);
+  }, [catalogEmails, supplierMetaRows, supplierRows, supplierSearch, supplierSort]);
 
   const selectedCatalog = useMemo(() => {
     if (!supplierDirectory.length) return null;
@@ -661,15 +692,6 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const storedSettings = window.localStorage.getItem(GMAIL_SETTINGS_STORAGE_KEY);
-    if (storedSettings) {
-      try {
-        setGmailSettings({ ...defaultGmailSettings, ...(JSON.parse(storedSettings) as Partial<GmailSettings>) });
-      } catch {
-        window.localStorage.removeItem(GMAIL_SETTINGS_STORAGE_KEY);
-      }
-    }
-
     // Get active Supabase session and set active user
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -682,8 +704,6 @@ export default function Home() {
           role: "Admin",
           organisation: org
         });
-        setLoginEmail(u.email || "");
-        setLoginName(name);
       } else {
         setAuthUser(null);
         router.push("/login");
@@ -703,8 +723,6 @@ export default function Home() {
           role: "Admin",
           organisation: org
         });
-        setLoginEmail(u.email || "");
-        setLoginName(name);
       } else {
         setAuthUser(null);
         router.push("/login");
@@ -743,11 +761,6 @@ export default function Home() {
   }, [authUser, authChecked, apiBaseUrl, router]);
 
   useEffect(() => {
-    if (!authUser || typeof window === "undefined") return;
-    window.localStorage.setItem(GMAIL_SETTINGS_STORAGE_KEY, JSON.stringify(gmailSettings));
-  }, [authUser, gmailSettings]);
-
-  useEffect(() => {
     if (!selectedInboxSupplier && inboxThreads[0]) {
       setSelectedInboxSupplier(inboxThreads[0].supplier_name);
     }
@@ -775,18 +788,18 @@ export default function Home() {
 
       try {
         const [suppliersRes, itemsRes, emailsRes] = await Promise.all([
-          fetch(`${apiBaseUrl}/api/suppliers`),
-          fetch(`${apiBaseUrl}/api/catalogs/items?limit=200`),
-          fetch(`${apiBaseUrl}/api/catalogs/emails?limit=50`),
+          authFetch(`${apiBaseUrl}/api/suppliers`),
+          authFetch(`${apiBaseUrl}/api/catalogs/items?limit=200`),
+          authFetch(`${apiBaseUrl}/api/catalogs/emails?limit=50`),
         ]);
 
-        if (!suppliersRes.ok || !itemsRes.ok) {
-          throw new Error("Failed to fetch supplier data from backend.");
+        if (!emailsRes.ok) {
+          throw new Error("Failed to fetch supplier emails from backend.");
         }
 
-        const suppliers: SupplierApiRow[] = await suppliersRes.json();
-        const items: Array<SupplierItem & { supplier_name: string }> = await itemsRes.json();
-        const emails: CatalogEmailRow[] = emailsRes.ok ? await emailsRes.json() : [];
+        const suppliers: SupplierApiRow[] = suppliersRes.ok ? await suppliersRes.json() : [];
+        const items: Array<SupplierItem & { supplier_name: string }> = itemsRes.ok ? await itemsRes.json() : [];
+        const emails: CatalogEmailRow[] = await emailsRes.json();
 
         const supplierMeta = new Map(
           suppliers.map((supplier) => [supplier.name, supplier])
@@ -802,8 +815,10 @@ export default function Home() {
         });
 
         if (!cancelled) {
+          setSupplierMetaRows(suppliers);
           setSupplierRows(mergedRows);
           setCatalogEmails(emails);
+          setSupplierError(!suppliersRes.ok || !itemsRes.ok ? "Showing fetched emails. Catalogue item details are still loading or unavailable." : null);
           setSupplierLoading(false);
         }
       } catch (error) {
@@ -859,56 +874,15 @@ export default function Home() {
     }
   }
 
-  function gmailPayload() {
-    return {
-      email: gmailSettings.email.trim(),
-      app_password: gmailSettings.appPassword.trim(),
-      mailbox: gmailSettings.mailbox.trim() || "INBOX",
-    };
-  }
-
-  function validateGmailSettings() {
-    const payload = gmailPayload();
-    if (!payload.email || !payload.app_password) {
-      setSettingsStatus("Enter Gmail address and app password first.");
-      return null;
-    }
-    return payload;
-  }
-
-  function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const email = loginEmail.trim();
-    const name = loginName.trim() || email.split("@")[0] || "User";
-
-    if (!/^[^@\s]+@gmail\.com$/i.test(email)) {
-      setLoginError("Use a Gmail address to continue.");
-      return;
-    }
-
-    const user: AuthUser = { email, name, role: "Admin" };
-    setAuthUser(user);
-    setLoginError("");
-    setGmailSettings((current) => ({ ...current, email: current.email || email }));
-
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-    }
-  }
-
   async function handleLogout() {
     await supabase.auth.signOut();
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.localStorage.removeItem(GMAIL_SETTINGS_STORAGE_KEY);
       // Clear cookie
       document.cookie = `sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax; Secure`;
     }
     socketRef.current?.close();
     socketRef.current = null;
     setAuthUser(null);
-    setGmailSettings(defaultGmailSettings);
-    setSettingsStatus("");
     setActiveTab("dashboard");
     router.push("/login");
   }
@@ -1215,25 +1189,7 @@ export default function Home() {
   }
 
   if (!authUser) {
-    return (
-      <main className="auth-page">
-        <form className="auth-card" onSubmit={handleLogin}>
-          <p className="auth-kicker">MediCORE</p>
-          <h1>Sign in with Gmail</h1>
-          <p>Use your Gmail address to start. Gmail reading is configured after login using an app password.</p>
-          <label>
-            <span>Gmail address</span>
-            <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} placeholder="you@gmail.com" autoComplete="email" />
-          </label>
-          <label>
-            <span>Name</span>
-            <input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="Your name" autoComplete="name" />
-          </label>
-          {loginError && <div className="auth-error">{loginError}</div>}
-          <button type="submit">Continue</button>
-        </form>
-      </main>
-    );
+    return null;
   }
 
   return (
@@ -1642,18 +1598,6 @@ export default function Home() {
 
           {activeTab === "inbox" && (
             <>
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "18px 20px",
-                borderRadius: "10px",
-                border: "1px solid var(--line)",
-                background: "var(--panel)",
-                marginBottom: "24px"
-              }}>
-                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Inbox</h2>
-              </div>
               <div className="inbox-layout">
               <aside className="inbox-list-panel">
                 <div className="inbox-panel-header">
@@ -2240,32 +2184,95 @@ export default function Home() {
                 {/* 2. SUPPLIER CONNECTION TAB */}
                 {settingsActiveTab === "email" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
-                    <div>
-                      <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700, color: "#092f28" }}>Supplier Connection</h2>
-                      <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Configure how MediCORE scans and reads catalog emails from your inbox.</p>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "18px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                      <div>
+                        <h2 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700, color: "#092f28" }}>Supplier Connection</h2>
+                        <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>Configure authenticated Gmail access and supplier approval rules.</p>
+                      </div>
+                      <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        minHeight: "40px",
+                        padding: "9px 12px",
+                        border: "1px solid rgba(15, 122, 95, 0.18)",
+                        borderRadius: "10px",
+                        background: "rgba(15, 122, 95, 0.06)",
+                        color: "var(--accent)",
+                        fontSize: "13px",
+                        fontWeight: 700
+                      }}>
+                        <Shield size={16} />
+                        Verified secure channel
+                      </div>
+                    </div>
+
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                      gap: "12px"
+                    }}>
+                      {[
+                        { icon: <Mail size={17} />, label: "Mailbox", value: connectedAccounts[0]?.email_address || "Gmail connected" },
+                        { icon: <Shield size={17} />, label: "Credentials", value: "Encrypted server vault" },
+                        { icon: <CheckCircle2 size={17} />, label: "Approvals", value: pendingApprovalsList.length ? `${pendingApprovalsList.length} pending` : "No pending requests" },
+                      ].map((item) => (
+                        <div key={item.label} style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "12px",
+                          minHeight: "70px",
+                          padding: "14px",
+                          border: "1px solid var(--line)",
+                          borderRadius: "10px",
+                          background: "#fff"
+                        }}>
+                          <span style={{
+                            width: "34px",
+                            height: "34px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: "8px",
+                            background: "rgba(15, 122, 95, 0.08)",
+                            color: "var(--accent)"
+                          }}>{item.icon}</span>
+                          <div style={{ minWidth: 0 }}>
+                            <span style={{ display: "block", color: "var(--muted)", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.08em" }}>{item.label}</span>
+                            <strong style={{ display: "block", marginTop: "3px", color: "#092f28", fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.value}</strong>
+                          </div>
+                        </div>
+                      ))}
                     </div>
 
                     {/* Method Selection visual cards */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                      <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 600, color: "var(--ink)" }}>Choose Email Ingestion Approach</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                      <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 600, color: "var(--ink)" }}>Choose protected ingestion mode</h3>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px" }}>
                         {/* Approach 1 */}
-                        <div
+                        <button
+                          type="button"
                           onClick={() => setLocalApproach("approach_1")}
                           style={{
                             padding: "20px",
-                            borderRadius: "12px",
+                            borderRadius: "10px",
                             border: `2px solid ${localApproach === "approach_1" ? "var(--accent)" : "var(--line)"}`,
-                            background: localApproach === "approach_1" ? "rgba(15, 122, 95, 0.04)" : "rgba(255, 255, 255, 0.4)",
+                            background: localApproach === "approach_1" ? "linear-gradient(180deg, rgba(15, 122, 95, 0.08), #fff)" : "#fff",
+                            color: "var(--ink)",
                             cursor: "pointer",
                             transition: "all 0.2s ease",
                             display: "flex",
                             flexDirection: "column",
-                            gap: "8px"
+                            gap: "10px",
+                            textAlign: "left",
+                            boxShadow: localApproach === "approach_1" ? "0 8px 18px rgba(15, 122, 95, 0.08)" : "none"
                           }}
                         >
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <strong style={{ fontSize: "15px", color: localApproach === "approach_1" ? "var(--accent)" : "var(--ink)" }}>Gmail Label Ingestion</strong>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                              <Mail size={17} color="var(--accent)" />
+                              <strong style={{ fontSize: "15px", color: localApproach === "approach_1" ? "var(--accent)" : "var(--ink)" }}>Gmail Label Ingestion</strong>
+                            </span>
                             <div style={{
                               width: "20px",
                               height: "20px",
@@ -2279,27 +2286,37 @@ export default function Home() {
                             </div>
                           </div>
                           <span style={{ fontSize: "12.5px", color: "var(--muted)", lineHeight: "1.4" }}>
-                            MediCORE will strictly monitor and parse emails tagged with the Gmail label <strong>'suppliers'</strong>. Safe, manual, and explicit.
+                            Only messages tagged with the Gmail label <strong>suppliers</strong> are parsed. Best for manual control.
                           </span>
-                        </div>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "var(--accent)", fontSize: "12px", fontWeight: 700 }}>
+                            <Shield size={13} /> Explicit mailbox scope
+                          </span>
+                        </button>
 
                         {/* Approach 2 */}
-                        <div
+                        <button
+                          type="button"
                           onClick={() => setLocalApproach("approach_2")}
                           style={{
                             padding: "20px",
-                            borderRadius: "12px",
+                            borderRadius: "10px",
                             border: `2px solid ${localApproach === "approach_2" ? "var(--accent)" : "var(--line)"}`,
-                            background: localApproach === "approach_2" ? "rgba(15, 122, 95, 0.04)" : "rgba(255, 255, 255, 0.4)",
+                            background: localApproach === "approach_2" ? "linear-gradient(180deg, rgba(15, 122, 95, 0.08), #fff)" : "#fff",
+                            color: "var(--ink)",
                             cursor: "pointer",
                             transition: "all 0.2s ease",
                             display: "flex",
                             flexDirection: "column",
-                            gap: "8px"
+                            gap: "10px",
+                            textAlign: "left",
+                            boxShadow: localApproach === "approach_2" ? "0 8px 18px rgba(15, 122, 95, 0.08)" : "none"
                           }}
                         >
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <strong style={{ fontSize: "15px", color: localApproach === "approach_2" ? "var(--accent)" : "var(--ink)" }}>Smart Keyword Ingestion</strong>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                              <CheckCircle2 size={17} color="var(--accent)" />
+                              <strong style={{ fontSize: "15px", color: localApproach === "approach_2" ? "var(--accent)" : "var(--ink)" }}>Trusted Supplier Approval</strong>
+                            </span>
                             <div style={{
                               width: "20px",
                               height: "20px",
@@ -2313,9 +2330,12 @@ export default function Home() {
                             </div>
                           </div>
                           <span style={{ fontSize: "12.5px", color: "var(--muted)", lineHeight: "1.4" }}>
-                            Automatically read trusted suppliers. Screen unrecognized senders for keywords; if a match with PDF is found, request approval in the Navbar.
+                            Trusted senders ingest automatically. New matching suppliers stay blocked until approved.
                           </span>
-                        </div>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "var(--accent)", fontSize: "12px", fontWeight: 700 }}>
+                            <Shield size={13} /> Approval gate enabled
+                          </span>
+                        </button>
                       </div>
                     </div>
 
@@ -2335,7 +2355,7 @@ export default function Home() {
                         </h4>
                         <ol style={{ margin: 0, paddingLeft: "20px", fontSize: "13.5px", color: "var(--ink)", display: "flex", flexDirection: "column", gap: "10px", lineHeight: "1.5" }}>
                           <li>Open your linked Gmail account in a browser.</li>
-                          <li>Go to <strong>Settings</strong> ➔ <strong>Labels</strong>. Scroll down and click <strong>Create a new label</strong>.</li>
+                          <li>Go to <strong>Settings</strong> &gt; <strong>Labels</strong>. Scroll down and click <strong>Create a new label</strong>.</li>
                           <li>Enter <strong>suppliers</strong> (all lowercase) as the label name and click Create.</li>
                           <li>Apply this new label to any incoming emails from your suppliers.</li>
                           <li>MediCORE will dynamically sync and analyze catalogs <em>only</em> inside this labeled folder.</li>
@@ -2465,35 +2485,68 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Unified Save Button */}
-                    <button
-                      type="button"
-                      onClick={() => saveEmailSyncSettings({
-                        ingestion_approach: localApproach,
-                        trusted_suppliers: localTrusted,
-                        keyword_filters: localKeywords
-                      })}
-                      disabled={savingSyncSettings}
-                      style={{
-                        padding: "14px 28px",
-                        background: "var(--accent)",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "10px",
-                        fontWeight: 600,
-                        fontSize: "14px",
-                        cursor: "pointer",
-                        width: "fit-content",
-                        alignSelf: "flex-end",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        boxShadow: "0 4px 12px rgba(15, 122, 95, 0.2)",
-                        transition: "all 0.2s ease"
-                      }}
-                    >
-                      {savingSyncSettings ? "Saving Settings..." : "Save Ingestion Settings"}
-                    </button>
+                    {/* Secure Save Footer */}
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "16px",
+                      flexWrap: "wrap",
+                      padding: "16px",
+                      border: "1px solid rgba(15, 122, 95, 0.18)",
+                      borderRadius: "10px",
+                      background: "linear-gradient(180deg, rgba(15, 122, 95, 0.05), #fff)"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+                        <span style={{
+                          width: "38px",
+                          height: "38px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: "8px",
+                          background: "rgba(15, 122, 95, 0.1)",
+                          color: "var(--accent)"
+                        }}>
+                          <Shield size={18} />
+                        </span>
+                        <div>
+                          <strong style={{ display: "block", color: "#092f28", fontSize: "14px" }}>Authenticated supplier rules</strong>
+                          <span style={{ display: "block", marginTop: "3px", color: "var(--muted)", fontSize: "12px" }}>
+                            Saves the selected ingestion mode, trusted suppliers, keywords, and approval gate.
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => saveEmailSyncSettings({
+                          ingestion_approach: localApproach,
+                          trusted_suppliers: localTrusted,
+                          keyword_filters: localKeywords
+                        })}
+                        disabled={savingSyncSettings}
+                        style={{
+                          minHeight: "44px",
+                          padding: "0 20px",
+                          background: savingSyncSettings ? "rgba(15, 122, 95, 0.65)" : "var(--accent)",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "8px",
+                          fontWeight: 700,
+                          fontSize: "14px",
+                          cursor: savingSyncSettings ? "not-allowed" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "8px",
+                          boxShadow: "0 4px 12px rgba(15, 122, 95, 0.18)",
+                          transition: "all 0.2s ease"
+                        }}
+                      >
+                        {savingSyncSettings ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                        {savingSyncSettings ? "Saving..." : "Save supplier connection"}
+                      </button>
+                    </div>
                   </div>
                 )}
 

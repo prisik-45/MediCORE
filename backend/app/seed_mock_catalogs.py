@@ -128,6 +128,25 @@ def build_catalogs() -> tuple[list[Supplier], list[CatalogEmail], list[CatalogIt
 
 
 def seed() -> None:
+    global TENANT_ID
+    env_tenant = os.getenv("MOCK_TENANT_ID")
+    if env_tenant:
+        try:
+            TENANT_ID = UUID(env_tenant)
+            print(f"Using MOCK_TENANT_ID from environment: {TENANT_ID}")
+        except ValueError:
+            print(f"Invalid MOCK_TENANT_ID environment variable: {env_tenant}")
+    else:
+        with SessionLocal() as db:
+            from backend.app.models import Profile
+            first_profile = db.query(Profile).first()
+            if first_profile:
+                TENANT_ID = first_profile.id
+                print(f"Dynamically selected tenant ID from registered user profile: {TENANT_ID}")
+            else:
+                print("No registered user profiles found in database. Using default fallback tenant ID: 11111111-1111-4111-8111-111111111111")
+                print("Tip: Register a user in the UI first, then run this seeder to see mock data on your dashboard.")
+
     suppliers, emails, catalog_items = build_catalogs()
     with SessionLocal() as db:
         for row in suppliers:
