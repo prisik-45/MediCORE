@@ -23,6 +23,10 @@ import {
   Sliders,
   CheckCircle2,
   XCircle,
+  RefreshCw,
+  Trash2,
+  Edit,
+  ArrowRight,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -2243,6 +2247,510 @@ export default function Home() {
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    {/* Add/Edit Account Form Panel */}
+                    {addAccountExpanded && (
+                      <div style={{
+                        padding: "24px",
+                        borderRadius: "12px",
+                        background: "#fff",
+                        border: "2px solid var(--accent)",
+                        boxShadow: "0 8px 24px rgba(15, 122, 95, 0.12)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "20px",
+                        position: "relative"
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#092f28" }}>
+                            {editingAccountId ? "Edit Mailbox Filters & Settings" : "Connect New Supplier Inbox"}
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={resetAddAccountForm}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              color: "var(--muted)",
+                              padding: "4px"
+                            }}
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+
+                        {/* Setup Steps */}
+                        {!editingAccountId && (
+                          <div style={{ display: "flex", gap: "8px", borderBottom: "1px solid var(--line)", paddingBottom: "12px" }}>
+                            {[
+                              { step: 1, label: "Credentials" },
+                              { step: 3, label: "Ingestion Rules & Filters" }
+                            ].map((s) => (
+                              <button
+                                key={s.step}
+                                type="button"
+                                onClick={() => setSetupStep(s.step)}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  borderBottom: setupStep === s.step ? "2px solid var(--accent)" : "2px solid transparent",
+                                  padding: "6px 12px 10px",
+                                  color: setupStep === s.step ? "var(--accent)" : "var(--muted)",
+                                  fontWeight: 600,
+                                  fontSize: "13px",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Step 1: Credentials Form */}
+                        {(editingAccountId || setupStep === 1) && (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                            <label style={{ display: "flex", flexDirection: "column", gap: "6px", gridColumn: "span 2" }}>
+                              <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Provider</span>
+                              <select
+                                value={newAccountProvider}
+                                onChange={(e) => {
+                                  setNewAccountProvider(e.target.value);
+                                  if (e.target.value === "Gmail") {
+                                    setNewAccountImapHost("imap.gmail.com");
+                                    setNewAccountImapPort(993);
+                                  }
+                                }}
+                                disabled={!!editingAccountId}
+                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                              >
+                                <option value="Gmail">Gmail</option>
+                                <option value="Custom">Custom IMAP Server</option>
+                              </select>
+                            </label>
+
+                            <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>IMAP Username (Email Address)</span>
+                              <input
+                                type="email"
+                                value={newAccountEmail}
+                                onChange={(e) => setNewAccountEmail(e.target.value)}
+                                disabled={!!editingAccountId}
+                                placeholder="e.g. suppliers@company.com"
+                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: editingAccountId ? "#f7fafc" : "#fff" }}
+                              />
+                            </label>
+
+                            <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>
+                                {editingAccountId ? "New App Password (leave blank to keep current)" : "Gmail App Password"}
+                              </span>
+                              <input
+                                type="password"
+                                value={newAccountPassword}
+                                onChange={(e) => setNewAccountPassword(e.target.value)}
+                                placeholder={editingAccountId ? "••••••••••••••••" : "16-character Google app password"}
+                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)" }}
+                              />
+                            </label>
+
+                            {newAccountProvider === "Custom" && (
+                              <>
+                                <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                  <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>IMAP Server Host</span>
+                                  <input
+                                    type="text"
+                                    value={newAccountImapHost}
+                                    onChange={(e) => setNewAccountImapHost(e.target.value)}
+                                    placeholder="e.g. imap.example.com"
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)" }}
+                                  />
+                                </label>
+
+                                <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                  <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>IMAP Server Port</span>
+                                  <input
+                                    type="number"
+                                    value={newAccountImapPort}
+                                    onChange={(e) => setNewAccountImapPort(Number(e.target.value))}
+                                    placeholder="e.g. 993"
+                                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)" }}
+                                  />
+                                </label>
+                              </>
+                            )}
+
+                            {!editingAccountId && (
+                              <div style={{ gridColumn: "span 2", display: "flex", gap: "12px", marginTop: "8px" }}>
+                                <button
+                                  type="button"
+                                  onClick={testConnection}
+                                  disabled={testingConnection}
+                                  style={{
+                                    padding: "10px 16px",
+                                    border: "1px solid var(--accent)",
+                                    borderRadius: "8px",
+                                    background: "transparent",
+                                    color: "var(--accent)",
+                                    fontWeight: 600,
+                                    fontSize: "13px",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px"
+                                  }}
+                                >
+                                  {testingConnection && <Loader2 className="animate-spin" size={14} />}
+                                  {testingConnection ? "Verifying..." : "Test Server Connection"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSetupStep(3)}
+                                  disabled={!testResult?.success}
+                                  style={{
+                                    padding: "10px 16px",
+                                    borderRadius: "8px",
+                                    background: testResult?.success ? "var(--accent)" : "#cbd5e0",
+                                    color: "#fff",
+                                    border: "none",
+                                    fontWeight: 600,
+                                    fontSize: "13px",
+                                    cursor: testResult?.success ? "pointer" : "not-allowed",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px"
+                                  }}
+                                >
+                                  Continue to Ingestion Rules <ArrowRight size={14} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Step 3: Ingestion Rules & Filters Form */}
+                        {(editingAccountId || setupStep === 3) && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                              <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "var(--accent)" }}>
+                                Ingestion Gatekeeper Filters
+                              </h4>
+                              <p style={{ margin: 0, color: "var(--muted)", fontSize: "12.5px" }}>
+                                Fine-tune which messages inside the target mailbox gets processed into catalogue sheets.
+                              </p>
+                            </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "14px", padding: "16px", background: "rgba(0,0,0,0.01)", borderRadius: "8px", border: "1px solid var(--line)" }}>
+                              <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={filterRequireAttachment}
+                                  onChange={(e) => setFilterRequireAttachment(e.target.checked)}
+                                  style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                                />
+                                <div>
+                                  <strong style={{ display: "block", fontSize: "13.5px", color: "var(--ink)" }}>Require PDF Attachment</strong>
+                                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>Skip emails that do not contain parsed attachment files. (Turn off to parse text bodies)</span>
+                                </div>
+                              </label>
+
+                              <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                              <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={filterSkipPromotions}
+                                  onChange={(e) => setFilterSkipPromotions(e.target.checked)}
+                                  style={{ width: "18px", height: "18px", accentColor: "var(--accent)" }}
+                                />
+                                <div>
+                                  <strong style={{ display: "block", fontSize: "13.5px", color: "var(--ink)" }}>Auto-Skip Bulk / Promotion Emails</strong>
+                                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>Skips bulk emails, newsletters, or unsubscribable list messages.</span>
+                                </div>
+                              </label>
+
+                              <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                              <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Subject line keyword restrictions</span>
+                                <span style={{ fontSize: "12px", color: "var(--muted)" }}>Only sync emails containing these keywords in the subject (leave blank for all). Separated by commas.</span>
+                                <input
+                                  type="text"
+                                  value={filterSubjectKeywords}
+                                  onChange={(e) => setFilterSubjectKeywords(e.target.value)}
+                                  placeholder="e.g. catalog, price, inventory"
+                                  style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                />
+                              </label>
+
+                              <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid var(--line)" }} />
+
+                              <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Sender address keyword filters</span>
+                                <span style={{ fontSize: "12px", color: "var(--muted)" }}>Only process emails from senders containing these letters/words (leave blank for all).</span>
+                                <input
+                                  type="text"
+                                  value={filterSenderKeywords}
+                                  onChange={(e) => setFilterSenderKeywords(e.target.value)}
+                                  placeholder="e.g. orders, sales, billing"
+                                  style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--line)", background: "#fff" }}
+                                />
+                              </label>
+                            </div>
+
+                            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", marginTop: "10px" }}>
+                              <button
+                                type="button"
+                                onClick={resetAddAccountForm}
+                                style={{
+                                  padding: "10px 18px",
+                                  border: "1px solid var(--line)",
+                                  borderRadius: "8px",
+                                  background: "transparent",
+                                  color: "var(--ink)",
+                                  fontSize: "13px",
+                                  fontWeight: 600,
+                                  cursor: "pointer"
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={saveAccount}
+                                disabled={savingAccount}
+                                style={{
+                                  padding: "10px 20px",
+                                  background: "var(--accent)",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: "8px",
+                                  fontSize: "13px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px"
+                                }}
+                              >
+                                {savingAccount && <Loader2 className="animate-spin" size={14} />}
+                                {editingAccountId ? "Update Account & Filters" : "Connect Account"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {testResult && (
+                          <div style={{
+                            padding: "12px 16px",
+                            borderRadius: "8px",
+                            fontSize: "13px",
+                            lineHeight: "1.4",
+                            background: testResult.success ? "rgba(49, 151, 149, 0.1)" : "rgba(229, 62, 62, 0.1)",
+                            color: testResult.success ? "#2c7a7b" : "#c53030",
+                            border: `1px solid ${testResult.success ? "rgba(49, 151, 149, 0.2)" : "rgba(229, 62, 62, 0.2)"}`
+                          }}>
+                            {testResult.message}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Connected Mailboxes Management */}
+                    <div style={{
+                      padding: "24px",
+                      borderRadius: "12px",
+                      background: "rgba(255, 255, 255, 0.4)",
+                      border: "1px solid var(--line)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "16px"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#092f28" }}>Connected Mailboxes</h3>
+                          <p style={{ margin: "4px 0 0 0", color: "var(--muted)", fontSize: "13px" }}>Manage your synced accounts and manually trigger polling tasks.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAddAccountExpanded(true)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "8px 14px",
+                            background: "transparent",
+                            color: "var(--accent)",
+                            border: "1px solid var(--accent)",
+                            borderRadius: "8px",
+                            fontSize: "13px",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.2s"
+                          }}
+                        >
+                          <Plus size={14} /> Connect Another Inbox
+                        </button>
+                      </div>
+
+                      {loadingAccounts ? (
+                        <div style={{ display: "flex", justifyContent: "center", padding: "20px" }}>
+                          <Loader2 className="animate-spin" size={24} color="var(--accent)" />
+                        </div>
+                      ) : connectedAccounts.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: "30px 20px", border: "1px dashed var(--line)", borderRadius: "8px", background: "rgba(0,0,0,0.01)" }}>
+                          <Mail size={32} color="var(--muted)" style={{ margin: "0 auto 12px", display: "block" }} />
+                          <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px" }}>No connected email accounts found.</p>
+                          <button
+                            type="button"
+                            onClick={() => setAddAccountExpanded(true)}
+                            style={{ marginTop: "12px", color: "var(--accent)", background: "none", border: "none", fontWeight: 600, cursor: "pointer", fontSize: "13px" }}
+                          >
+                            Set up your first email account
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {connectedAccounts.map((acc) => {
+                            const isSyncing = syncingAccountsState[acc.id] || false;
+                            return (
+                              <div
+                                key={acc.id}
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "12px",
+                                  padding: "16px",
+                                  border: "1px solid var(--line)",
+                                  borderRadius: "10px",
+                                  background: "#fff",
+                                  boxShadow: "0 2px 6px rgba(0,0,0,0.02)"
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                                    <span style={{
+                                      width: "40px",
+                                      height: "40px",
+                                      borderRadius: "8px",
+                                      background: "rgba(15, 122, 95, 0.08)",
+                                      color: "var(--accent)",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center"
+                                    }}>
+                                      <Mail size={18} />
+                                    </span>
+                                    <div>
+                                      <strong style={{ display: "block", color: "var(--ink)", fontSize: "14px" }}>{acc.email_address}</strong>
+                                      <span style={{ display: "block", fontSize: "12px", color: "var(--muted)", marginTop: "2px" }}>
+                                        {acc.provider} ({acc.imap_host}:{acc.imap_port})
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => triggerAccountSync(acc.id)}
+                                      disabled={isSyncing}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "6px",
+                                        padding: "7px 12px",
+                                        background: "var(--accent)",
+                                        color: "#fff",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        fontSize: "12px",
+                                        fontWeight: 600,
+                                        cursor: isSyncing ? "not-allowed" : "pointer",
+                                        opacity: isSyncing ? 0.7 : 1,
+                                        transition: "all 0.2s"
+                                      }}
+                                    >
+                                      {isSyncing ? <RefreshCw className="animate-spin" size={12} /> : <RefreshCw size={12} />}
+                                      {isSyncing ? "Syncing..." : "Sync Now"}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => editAccount(acc)}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        padding: "7px",
+                                        background: "rgba(15, 122, 95, 0.08)",
+                                        color: "var(--accent)",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        cursor: "pointer",
+                                        transition: "all 0.2s"
+                                      }}
+                                      title="Edit settings / filters"
+                                    >
+                                      <Edit size={14} />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteAccount(acc.id)}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        padding: "7px",
+                                        background: "rgba(229, 62, 62, 0.08)",
+                                        color: "#e53e3e",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        cursor: "pointer",
+                                        transition: "all 0.2s"
+                                      }}
+                                      title="Disconnect inbox"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div style={{
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: "16px",
+                                  paddingTop: "12px",
+                                  borderTop: "1px dashed var(--line)",
+                                  fontSize: "12px",
+                                  color: "var(--muted)"
+                                }}>
+                                  <span>
+                                    <strong>Status:</strong>{" "}
+                                    <span style={{
+                                      color: acc.sync_status === "failed" ? "#e53e3e" : acc.sync_status === "success" ? "#319795" : "var(--muted)",
+                                      fontWeight: 600
+                                    }}>
+                                      {acc.sync_status ? acc.sync_status.toUpperCase() : "IDLE"}
+                                    </span>
+                                  </span>
+                                  {acc.last_synced_at && (
+                                    <span>
+                                      <strong>Last Synced:</strong> {new Date(acc.last_synced_at).toLocaleString()}
+                                    </span>
+                                  )}
+                                  {acc.sync_error_msg && (
+                                    <span style={{ color: "#e53e3e", width: "100%", marginTop: "4px" }}>
+                                      <strong>Error:</strong> {acc.sync_error_msg}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
 
                     {/* Method Selection visual cards */}

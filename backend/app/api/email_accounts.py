@@ -514,13 +514,17 @@ def trigger_sync_now(
         )
         
     try:
-        # Trigger Celery task + Background task fallback
+        # Trigger Celery task, fallback to local background task if Celery/Redis is down
         from backend.app.tasks import poll_email_account
-        background_tasks.add_task(poll_email_account, str(account.id))
+        celery_queued = False
         try:
             poll_email_account.delay(str(account.id))
-        except Exception:
-            pass
+            celery_queued = True
+        except Exception as celery_err:
+            logger.warning(f"Celery queue failed ({celery_err}). Falling back to local background task.")
+            
+        if not celery_queued:
+            background_tasks.add_task(poll_email_account, str(account.id))
         
         # Mark sync as pending so frontend gets positive response immediately
         account.sync_status = "pending"
