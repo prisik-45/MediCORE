@@ -52,6 +52,8 @@ class CatalogItem(Base):
     available_qty: Mapped[float] = mapped_column(Numeric(14, 2))
     unit: Mapped[str] = mapped_column(String(50))
     valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lead_time_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moq: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(384))
     raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict)
 

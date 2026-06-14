@@ -115,7 +115,7 @@ textarea {
 }
 
 .sidebar {
-  position:fixed;
+  position: fixed;
   left: 0;
   top: 0;
   width: var(--sidebar-width);
@@ -631,22 +631,39 @@ body.sidebar-collapsed .app-shell {
 
 table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13.5px;
 }
 
 th,
 td {
-  padding: 14px 20px;
+  padding: 13px 18px;
   text-align: left;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
 th {
-  color: var(--muted);
-  font-size: 12px;
+  background-color: #fafbfc;
+  color: #43544f;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  border-bottom: 2px solid rgba(15, 122, 95, 0.12);
+}
+
+tbody tr:nth-child(even) {
+  background-color: rgba(15, 122, 95, 0.012);
+}
+
+tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+tbody tr:hover {
+  background-color: rgba(15, 122, 95, 0.035) !important;
 }
 
 .suppliers-table td:nth-child(3),
@@ -725,6 +742,7 @@ th {
   border-radius: 8px;
   line-height: 1.42;
   font-size: 14px;
+  white-space: pre-wrap;
 }
 
 .message.user {
@@ -885,7 +903,7 @@ th {
 
 .overview-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1066,6 +1084,7 @@ th {
 }
 
 @media (max-width: 1180px) {
+
   .overview-metrics,
   .overview-grid {
     grid-template-columns: 1fr 1fr;
@@ -1073,6 +1092,7 @@ th {
 }
 
 @media (max-width: 760px) {
+
   .overview-metrics,
   .overview-grid {
     grid-template-columns: 1fr;
@@ -1108,7 +1128,7 @@ th {
   gap: 12px;
 }
 
-.compare-search-group > span,
+.compare-search-group>span,
 .compare-sort span,
 .compare-search-group small {
   color: #4f927f;
@@ -1371,6 +1391,7 @@ th {
 }
 
 @media (max-width: 1180px) {
+
   .compare-toolbar,
   .compare-search-group,
   .compare-sort {
@@ -1649,6 +1670,7 @@ th {
 }
 
 @media (max-width: 980px) {
+
   .supplier-toolbar,
   .supplier-controls,
   .catalog-controls {
@@ -1914,8 +1936,108 @@ th {
 }
 
 @media (max-width: 900px) {
+
   .settings-grid,
   .settings-form-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.premium-suggestion-btn:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, rgba(15, 122, 95, 0.06) 0%, rgba(15, 122, 95, 0.1) 100%) !important;
+  border-color: rgba(15, 122, 95, 0.3) !important;
+  box-shadow: 0 4px 12px rgba(15, 122, 95, 0.08) !important;
+  color: var(--accent) !important;
+}
+
+.premium-suggestion-btn:active {
+  transform: translateY(0);
+  background: linear-gradient(135deg, rgba(15, 122, 95, 0.08) 0%, rgba(15, 122, 95, 0.12) 100%) !important;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    margin-top: 8px;
+  }
+  to {
+    opacity: 1;
+    margin-top: 0px;
+  }
+}
+
+.settings-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 12px;
+  border-radius: 8px;
+  white-space: normal;
+  z-index: 100;
+  box-shadow: 0 6px 20px rgba(9, 47, 40, 0.08), 0 1px 3px rgba(9, 47, 40, 0.02);
+  pointer-events: none;
+  font-weight: 500;
+  animation: fadeInUp 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.settings-tooltip.centered {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.settings-tooltip.right-aligned {
+  right: 0;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  opacity: 0.4;
+  animation: typingPulse 1.2s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typingPulse {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Sidebar Inbox Notification Styles */
+.sidebar-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-icon-wrapper .notification-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: #ff4d4f; /* Vibrant premium red */
+  box-shadow: 0 0 0 2px var(--panel);
+  z-index: 10;
 }

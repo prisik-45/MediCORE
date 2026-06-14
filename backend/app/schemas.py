@@ -15,6 +15,7 @@ class ExtractedCatalogItem(BaseModel):
     valid_until: datetime | None = None
     supplier_sku: str | None = None
     lead_time_days: int | None = None
+    moq: float | None = None
     notes: str | None = None
 
     @field_validator("available_qty", mode="before")
@@ -26,6 +27,16 @@ class ExtractedCatalogItem(BaseModel):
             return float(v)
         except (ValueError, TypeError):
             return 0.0
+
+    @field_validator("moq", mode="before")
+    @classmethod
+    def validate_moq(cls, v):
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
 
     @field_validator("unit", mode="before")
     @classmethod
@@ -45,7 +56,7 @@ class CatalogIngestionResult(BaseModel):
 
 
 class QueryPlan(BaseModel):
-    operation: str = Field(pattern="^(supplier_compare|best_price|catalog_search|history_compare|supplier_activity)$")
+    operation: str = Field(pattern="^(supplier_compare|best_price|catalog_search|history_compare|supplier_activity|unrelated)$")
     normalized_name: str | None = None
     min_quantity: float | None = None
     unit: str | None = None

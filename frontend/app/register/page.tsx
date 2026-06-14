@@ -20,7 +20,7 @@ export default function RegisterStep1Page() {
   async function handleRegister(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    
+
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
       return;

@@ -86,6 +86,7 @@ def build_catalogs() -> tuple[list[Supplier], list[CatalogEmail], list[CatalogIt
             qty = rng.randrange(40, 420) * 100
             price = round(rng.uniform(min_price, max_price) * rng.uniform(0.94, 1.08), 2)
             lead_time_days = rng.choice([2, 3, 5, 7, 10, 14])
+            moq_val = rng.choice([100, 250, 500, 1000])
             valid_until = today + timedelta(days=rng.randint(14, 75))
             catalog_items.append(
                 CatalogItem(
@@ -100,6 +101,8 @@ def build_catalogs() -> tuple[list[Supplier], list[CatalogEmail], list[CatalogIt
                     available_qty=qty,
                     unit=unit,
                     valid_until=valid_until,
+                    lead_time_days=lead_time_days,
+                    moq=moq_val,
                     embedding=None,
                     raw_payload={
                         "source": "mock_extracted_catalogue",
@@ -108,7 +111,7 @@ def build_catalogs() -> tuple[list[Supplier], list[CatalogEmail], list[CatalogIt
                         "supplier_sku": f"{domain.split('.')[0].upper()[:4]}-{catalog_no:02d}-{item_no:03d}",
                         "pack_size": rng.choice(["25 kg bag", "50 kg drum", "5 kg carton", "10 kg fibre drum"]),
                         "grade": rng.choice(["IP", "BP", "USP", "EP", "Food/Pharma"]),
-                        "moq": rng.choice([100, 250, 500, 1000]),
+                        "moq": moq_val,
                         "lead_time_days": lead_time_days,
                         "payment_terms": rng.choice(["Net 15", "Net 30", "50% advance", "Against proforma invoice"]),
                         "extraction_confidence": round(rng.uniform(0.86, 0.98), 2),

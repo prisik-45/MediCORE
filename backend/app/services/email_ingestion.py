@@ -46,6 +46,45 @@ class EmailIngestionService:
         self.settings = get_settings()
         self.llm = GroqClient()
 
+    def _extract_sender(self, message: Message) -> tuple[str, str]:
+        from_header = message.get("From", "")
+        from email.header import decode_header
+        try:
+            decoded_parts = decode_header(from_header)
+            decoded_from = []
+            for part, encoding in decoded_parts:
+                if isinstance(part, bytes):
+                    decoded_from.append(part.decode(encoding or "utf-8", errors="ignore"))
+                else:
+                    decoded_from.append(part)
+            from_header_str = "".join(decoded_from)
+        except Exception:
+            from_header_str = from_header
+
+        sender_pair = email.utils.parseaddr(from_header_str)
+        display_name = sender_pair[0]
+        sender = sender_pair[1]
+
+        # Clean up display name
+        if display_name:
+            display_name = display_name.strip().strip('"').strip("'").strip()
+            display_name = " ".join(display_name.split())
+
+        # Check body for forwarded sender pattern if display name is empty or matches email
+        body_text = self._get_email_body_text(message)
+        if (not display_name or display_name.lower() == sender.lower()) and body_text:
+            import re
+            body_match = re.search(r"(?mi)^\s*(?:from|From):\s*([^\n<]+)<([^>@]+@[^>]+)>", body_text)
+            if body_match:
+                body_name = body_match.group(1).strip().strip('"').strip("'").strip()
+                body_email = body_match.group(2).strip()
+                if body_name:
+                    display_name = body_name
+                    if "@" in body_email:
+                        sender = body_email
+
+        return display_name, sender
+
     def preview_imap_inbox(
         self,
         imap_username: str | None = None,
@@ -73,10 +112,12 @@ class EmailIngestionService:
                 message = email.message_from_bytes(data[0][1])
                 attachments = [att["filename"] for att in self._collect_attachments(message)]
                 if attachments:
+                    display_name, sender = self._extract_sender(message)
                     pdf_messages.append(
                         {
                             "raw_email_id": msg_id.decode(),
-                            "from": email.utils.parseaddr(message.get("From", ""))[1],
+                            "from": display_name or sender,
+                            "email": sender,
                             "subject": message.get("Subject"),
                             "pdf_attachments": attachments,
                         }
@@ -139,7 +180,8 @@ class EmailIngestionService:
             logger.info("Skipping already-extracted email id=%s", raw_email_id)
             return 0
 
-        sender = email.utils.parseaddr(message.get("From", ""))[1]
+        display_name, sender = self._extract_sender(message)
+            
         subject = message.get("Subject")
         
         if parse_targets is None:
@@ -167,7 +209,7 @@ class EmailIngestionService:
         if not parse_targets:
             return 0
 
-        supplier = self._upsert_supplier(sender, tenant_id=tenant_id)
+        supplier = self._upsert_supplier(sender, display_name=display_name, tenant_id=tenant_id)
         count = 0
 
         for target in parse_targets:
@@ -310,6 +352,8 @@ class EmailIngestionService:
                     available_qty=item.available_qty,
                     unit=item.unit,
                     valid_until=item.valid_until,
+                    lead_time_days=item.lead_time_days,
+                    moq=item.moq,
                     embedding=self._safe_embedding(item_text),
                     raw_payload=raw_payload,
                 )
@@ -344,7 +388,7 @@ class EmailIngestionService:
             is not None
         )
 
-    def _upsert_supplier(self, sender: str, tenant_id: Any | None = None) -> Supplier:
+    def _upsert_supplier(self, sender: str, display_name: str | None = None, tenant_id: Any | None = None) -> Supplier:
         domain = get_supplier_domain(sender)
         if tenant_id:
             supplier = self.db.query(Supplier).filter(
@@ -354,11 +398,32 @@ class EmailIngestionService:
         else:
             supplier = self.db.query(Supplier).filter(Supplier.email_domain == domain).first()
 
+        cleaned_display_name = display_name.strip() if display_name else None
+
         if supplier:
+            if cleaned_display_name and supplier.name != cleaned_display_name:
+                supplier.name = cleaned_display_name
+                self.db.add(supplier)
             return supplier
 
-        name_part = domain.split("@")[0] if "@" in domain else domain.split(".")[0]
-        supplier_name = name_part.replace("-", " ").replace(".", " ").title()
+        if cleaned_display_name:
+            supplier_name = cleaned_display_name
+        else:
+            # Check if domain is a generic domain
+            generic_domains = {
+                "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
+                "mail.com", "protonmail.com", "proton.me", "icloud.com", "zoho.com",
+                "gmx.com", "yandex.com", "live.com"
+            }
+            email_domain_part = sender.split("@")[1].lower() if "@" in sender else domain
+            
+            if email_domain_part in generic_domains:
+                # Use the full email address, don't format the name from the email ID
+                supplier_name = sender
+            else:
+                # Custom domain: format the domain name prefix
+                domain_prefix = email_domain_part.split(".")[0]
+                supplier_name = domain_prefix.replace("-", " ").replace(".", " ").title()
 
         supplier = Supplier(
             id=uuid4(),
@@ -636,7 +701,7 @@ class EmailIngestionService:
                     message = email.message_from_bytes(data[0][1])
 
                     # Apply keyword / attachment filters
-                    sender = email.utils.parseaddr(message.get("From", ""))[1]
+                    display_name, sender = self._extract_sender(message)
                     subject = message.get("Subject") or ""
 
                     # Check Promotions/Newsletters first
@@ -711,6 +776,7 @@ class EmailIngestionService:
                                     pending_list.append({
                                         "email_id": raw_id_str,
                                         "sender": sender,
+                                        "supplier_name": display_name or sender,
                                         "subject": subject,
                                         "date": datetime.now(UTC).isoformat()
                                     })

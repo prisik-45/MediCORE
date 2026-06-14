@@ -36,6 +36,7 @@ def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
     return [
         {
             "id": str(item.id),
+            "catalog_email_id": str(item.catalog_email_id) if getattr(item, "catalog_email_id", None) else None,
             "supplier_name": supplier_names.get(item.supplier_id, "Mock supplier"),
             "ingredient_name": item.ingredient_name,
             "normalized_name": item.normalized_name,
@@ -44,8 +45,9 @@ def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
             "available_qty": float(item.available_qty),
             "unit": item.unit,
             "valid_until": item.valid_until,
-                "lead_time_days": (item.raw_payload or {}).get("lead_time_days"),
-                "pack_size": (item.raw_payload or {}).get("pack_size"),
+            "lead_time_days": getattr(item, "lead_time_days", None) if getattr(item, "lead_time_days", None) is not None else (item.raw_payload or {}).get("lead_time_days"),
+            "moq": getattr(item, "moq", None) if getattr(item, "moq", None) is not None else (item.raw_payload or {}).get("moq"),
+            "pack_size": (item.raw_payload or {}).get("pack_size"),
         }
         for item in sorted(filtered_items, key=lambda row: row.price_per_unit)[:limit]
     ]
@@ -109,6 +111,7 @@ def list_catalog_items(
         return [
             {
                 "id": str(item.id),
+                "catalog_email_id": str(item.catalog_email_id) if item.catalog_email_id else None,
                 "supplier_name": supplier_name,
                 "ingredient_name": item.ingredient_name,
                 "normalized_name": item.normalized_name,
@@ -117,7 +120,8 @@ def list_catalog_items(
                 "available_qty": float(item.available_qty),
                 "unit": item.unit,
                 "valid_until": item.valid_until,
-                "lead_time_days": (item.raw_payload or {}).get("lead_time_days"),
+                "lead_time_days": getattr(item, "lead_time_days", None) if getattr(item, "lead_time_days", None) is not None else (item.raw_payload or {}).get("lead_time_days"),
+                "moq": getattr(item, "moq", None) if getattr(item, "moq", None) is not None else (item.raw_payload or {}).get("moq"),
                 "pack_size": (item.raw_payload or {}).get("pack_size"),
             }
             for item, supplier_name in db.execute(stmt)
@@ -126,6 +130,36 @@ def list_catalog_items(
         if not settings.mock_data_enabled:
             raise
         return mock_catalog_items(q, limit)
+
+
+@router.delete("/emails/{email_id}", status_code=204)
+def delete_catalog_email(
+    email_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a specific catalog email and all its extracted catalog items securely."""
+    user_uuid = UUID(current_user["id"])
+    email_record = db.query(CatalogEmail).filter(CatalogEmail.id == email_id, CatalogEmail.tenant_id == user_uuid).first()
+    if not email_record:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=404,
+            detail="Catalog email not found or access denied."
+        )
+    try:
+        # Delete catalog items first to satisfy foreign key constraint
+        db.query(CatalogItem).filter(CatalogItem.catalog_email_id == email_id).delete(synchronize_session=False)
+        # Delete the email record itself
+        db.delete(email_record)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while deleting the email record: {str(e)}"
+        )
 
 
 

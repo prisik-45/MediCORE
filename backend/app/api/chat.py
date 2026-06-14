@@ -39,7 +39,6 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
     try:
         while True:
             message = await websocket.receive_text()
-            await websocket.send_json({"type": "status", "message": "Planning query"})
             try:
                 result = engine.answer(message, tenant_id=tenant_id)
                 await websocket.send_json({"type": "answer", "answer": result.answer, "rows": result.rows})

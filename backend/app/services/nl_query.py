@@ -30,6 +30,13 @@ class NaturalLanguageQueryEngine:
             plan = self.llm.plan_query(question)
         except Exception:
             plan = self._fallback_plan(question)
+
+        if plan.operation == "unrelated":
+            return ChatResponse(
+                answer="I'm sorry, but I can only answer questions related to the MediCORE procurement intelligence system (such as supplier catalogues, ingredients/chemicals, prices, inventory, and procurement settings).",
+                rows=[]
+            )
+
         validate_operation(plan.operation)
         rows = self._execute_plan(plan, tenant_id=tenant_id)
         try:
@@ -90,7 +97,7 @@ class NaturalLanguageQueryEngine:
 
     def _fallback_summary(self, question: str, rows: list[dict[str, Any]]) -> str:
         if not rows:
-            return "No matching catalogue rows found."
+            return "I couldn't find any matching data or records in the database for your query. Please check the spelling or try searching for another supplier or chemical ingredient."
 
         best = rows[0]
         lines = [
