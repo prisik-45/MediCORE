@@ -6,8 +6,8 @@ create table if not exists suppliers (
     tenant_id uuid not null,
     name text not null,
     email_domain text not null,
-    reliability_score numeric(5,2) not null default 50,
     last_email_date timestamptz,
+    certifications text,
     created_at timestamptz not null default now(),
     unique (tenant_id, email_domain)
 );

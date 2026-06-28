@@ -28,6 +28,8 @@ import {
   Edit,
   ArrowRight,
   Info,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -55,8 +57,8 @@ type SupplierItem = {
 type SupplierApiRow = {
   name: string;
   email_domain: string;
-  reliability_score: number;
   last_email_date: string | null;
+  certifications: string | null;
 };
 
 type CatalogEmailRow = {
@@ -71,19 +73,18 @@ type CatalogEmailRow = {
 type SupplierTableRow = SupplierItem & {
   supplier_name: string;
   email_domain: string;
-  reliability_score: number;
+  certifications?: string | null;
 };
 
-type SidebarTab = "dashboard" | "inbox" | "catalogs" | "analysis" | "compare" | "price-trends" | "assistant" | "suppliers" | "settings";
+type SidebarTab = "dashboard" | "inbox" | "catalogs" | "analysis" | "compare" | "assistant" | "suppliers" | "settings";
 
 type CompareSort = "best-value" | "lowest-price" | "highest-qty";
-type SupplierSort = "name" | "reliability" | "items" | "latest";
+type SupplierSort = "name" | "items" | "latest";
 
 type InboxThread = {
   id: string;
   supplier_name: string;
   email_domain: string;
-  reliability_score: number;
   item_count: number;
   latest_item: string;
   received_at: string | null;
@@ -427,6 +428,7 @@ export default function Home() {
   const [newAccountProvider, setNewAccountProvider] = useState("Gmail");
   const [newAccountEmail, setNewAccountEmail] = useState("");
   const [newAccountPassword, setNewAccountPassword] = useState("");
+  const [showSettingsPassword, setShowSettingsPassword] = useState(false);
   const [newAccountImapHost, setNewAccountImapHost] = useState("imap.gmail.com");
   const [newAccountImapPort, setNewAccountImapPort] = useState(993);
 
@@ -522,31 +524,19 @@ export default function Home() {
       const items = itemsByEmail.get(email.id) ?? [];
       const sortedItems = [...items].sort((left, right) => getBasePrice(left.price_per_unit, left.currency) - getBasePrice(right.price_per_unit, right.currency));
       const meta = supplierMeta.get(email.supplier_name);
-      const averageReliability = meta?.reliability_score ?? 50;
       const bestItem = sortedItems[0];
-      const receivedAt = email.received_at;
-      const ageMinutes = receivedAt ? Math.max(0, Math.round((Date.now() - new Date(receivedAt).getTime()) / 60000)) : 0;
       const hasExtractedItems = sortedItems.length > 0;
 
-      const statusTone: InboxThread["status_tone"] = !hasExtractedItems
-        ? "pending"
-        : ageMinutes < 90 ? "pending" : averageReliability >= 88 ? "processed" : averageReliability >= 78 ? "review" : "pending";
+      const statusTone: InboxThread["status_tone"] = hasExtractedItems ? "processed" : "pending";
 
-      const statusLabel = !hasExtractedItems
-        ? email.processing_status === "completed" ? "Stored" : "Extracting"
-        : ageMinutes < 60
-          ? "Extracting"
-          : averageReliability >= 88
-            ? "Processed"
-            : averageReliability >= 78
-              ? "Review"
-              : "New supplier";
+      const statusLabel = hasExtractedItems
+        ? "Processed"
+        : email.processing_status === "completed" ? "Stored" : "Extracting";
 
       return {
         id: email.id,
         supplier_name: email.supplier_name,
         email_domain: items[0]?.email_domain ?? meta?.email_domain ?? "-",
-        reliability_score: averageReliability,
         item_count: items.length,
         latest_item: email.subject || bestItem?.normalized_name || bestItem?.ingredient_name || "Email stored, extraction pending",
         received_at: email.received_at,
@@ -605,9 +595,6 @@ export default function Home() {
       ...catalogEmails.map((email) => email.supplier_name),
     ]);
     const completedCatalogs = catalogEmails.filter((email) => email.processing_status === "completed").length;
-    const averageReliability = supplierRows.length
-      ? supplierRows.reduce((total, row) => total + row.reliability_score, 0) / supplierRows.length
-      : 0;
 
     const itemGroups = new Map<string, SupplierTableRow[]>();
     for (const row of supplierRows) {
@@ -638,7 +625,6 @@ export default function Home() {
       emailsReceived: catalogEmails.length,
       completedCatalogs,
       activeSuppliers: suppliers.size,
-      averageReliability,
       deals: deals.slice(0, 3),
       activities,
     };
@@ -672,20 +658,17 @@ export default function Home() {
         return new Date(right.received_at).getTime() - new Date(left.received_at).getTime();
       })[0];
       const meta = supplierMeta.get(supplierName);
-      const avgReliability = items.length
-        ? items.reduce((total, item) => total + item.reliability_score, 0) / items.length
-        : meta?.reliability_score ?? 50;
       const totalQty = items.reduce((total, item) => total + item.available_qty, 0);
       return {
         supplier_name: supplierName,
         email_domain: items[0]?.email_domain ?? meta?.email_domain ?? "-",
-        reliability_score: avgReliability,
         item_count: items.length,
         best_item: sortedByPrice[0],
         total_qty: totalQty,
         last_catalog_at: latestEmail?.received_at ?? items[0]?.valid_until ?? meta?.last_email_date ?? null,
         subject: latestEmail?.subject ?? "Catalogue email received",
         items: sortedByPrice,
+        certifications: meta?.certifications ?? null,
       };
     }).filter((supplier) => {
       return !search
@@ -696,7 +679,6 @@ export default function Home() {
 
     return summaries.sort((left, right) => {
       if (supplierSort === "name") return left.supplier_name.localeCompare(right.supplier_name);
-      if (supplierSort === "reliability") return right.reliability_score - left.reliability_score;
       if (supplierSort === "items") return right.item_count - left.item_count;
       return new Date(right.last_catalog_at ?? 0).getTime() - new Date(left.last_catalog_at ?? 0).getTime();
     });
@@ -767,13 +749,11 @@ export default function Home() {
       const rowPriceBase = getBasePrice(row.price_per_unit, row.currency);
       const priceScore = maxPrice === minPrice ? 100 : ((maxPrice - rowPriceBase) / (maxPrice - minPrice)) * 100;
       const qtyScore = (row.available_qty / maxQty) * 100;
-      const reliabilityScore = Math.max(0, Math.min(100, row.reliability_score));
-      const overallScore = Math.round(priceScore * 0.45 + qtyScore * 0.25 + reliabilityScore * 0.3);
+      const overallScore = Math.round(priceScore * 0.65 + qtyScore * 0.35);
       return {
         ...row,
         priceScore: Math.round(priceScore),
         qtyScore: Math.round(qtyScore),
-        reliabilityDisplay: Math.round(reliabilityScore),
         overallScore,
       };
     });
@@ -986,7 +966,7 @@ export default function Home() {
           return {
             ...item,
             email_domain: meta?.email_domain ?? "-",
-            reliability_score: meta?.reliability_score ?? 0,
+            certifications: meta?.certifications ?? null,
           };
         });
 
@@ -1012,6 +992,27 @@ export default function Home() {
       cancelled = true;
     };
   }, [apiBaseUrl, authUser, dataRefreshKey]);
+
+  useEffect(() => {
+    if (authUser?.name) {
+      setMessages((current) => {
+        if (
+          current.length === 1 &&
+          current[0].role === "assistant" &&
+          (current[0].text === "Hey User!\nHow can I help you today?" || current[0].text.startsWith("Hey User!"))
+        ) {
+          const firstName = authUser.name.split(" ")[0];
+          return [
+            {
+              role: "assistant",
+              text: `Hey ${firstName}!\nHow can I help you today?`
+            }
+          ];
+        }
+        return current;
+      });
+    }
+  }, [authUser]);
 
   async function ensureSocket() {
     if (socketRef.current?.readyState === WebSocket.OPEN) return socketRef.current;
@@ -1089,6 +1090,20 @@ export default function Home() {
         return next;
       });
     }, speed);
+  }
+
+  function handleRefreshChat() {
+    socketRef.current?.close();
+    socketRef.current = null;
+    const nameToUse = authUser?.name ? authUser.name.split(" ")[0] : "User";
+    setMessages([
+      {
+        role: "assistant",
+        text: `Hey ${nameToUse}!\nHow can I help you today?`
+      }
+    ]);
+    setInput("");
+    setIsTypingResponse(false);
   }
 
   async function handleLogout() {
@@ -1478,8 +1493,11 @@ export default function Home() {
 
       {/* Navbar */}
       <nav className="navbar">
-        <div className="navbar-brand">
+        <div className="navbar-brand" style={{ display: "flex", alignItems: "center", gap: "14px" }}>
           <h1>MediCORE</h1>
+          <span style={{ fontSize: "12.5px", color: "var(--muted)", fontWeight: 500, letterSpacing: "0.02em", borderLeft: "1px solid var(--line)", paddingLeft: "14px" }}>
+            AI-Powered Automated Procurement System
+          </span>
         </div>
         <div className="navbar-actions" style={{ position: "relative" }}>
           <div className="user-menu" onClick={() => setUserMenuOpen(!userMenuOpen)}>
@@ -1721,15 +1739,6 @@ export default function Home() {
             </li>
             <li className="sidebar-nav-item">
               <button
-                className={`sidebar-nav-link ${activeTab === "price-trends" ? "active" : ""}`}
-                onClick={() => setActiveTab("price-trends")}
-              >
-                <TrendingUp size={18} />
-                <span>Price Trends</span>
-              </button>
-            </li>
-            <li className="sidebar-nav-item">
-              <button
                 className={`sidebar-nav-link ${activeTab === "assistant" ? "active" : ""}`}
                 onClick={() => setActiveTab("assistant")}
               >
@@ -1809,7 +1818,7 @@ export default function Home() {
                 <article>
                   <span>Active suppliers</span>
                   <strong>{dashboardData.activeSuppliers}</strong>
-                  <small>{dashboardData.averageReliability.toFixed(1)} avg reliability</small>
+                  <small>All verified suppliers</small>
                 </article>
               </div>
 
@@ -2154,7 +2163,7 @@ export default function Home() {
 
               {compareData.rows.length > 0 && (
                 <p className="compare-note">
-                  Showing {compareData.rows.length} suppliers who carry this ingredient - Top 3 shown as cards - AI score = price + quantity + reliability
+                  Showing {compareData.rows.length} suppliers who carry this ingredient - Top 3 shown as cards - AI score = price + quantity
                 </p>
               )}
 
@@ -2176,7 +2185,32 @@ export default function Home() {
                           <div className="supplier-badge">{supplierInitials(row.supplier_name)}</div>
                           <div>
                             <h3>{row.supplier_name}</h3>
-                            <p>{row.email_domain}</p>
+                            <p style={{ margin: 0 }}>{row.email_domain}</p>
+                            {row.certifications && (
+                              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "4px" }}>
+                                {row.certifications.split(",").map((cert) => {
+                                  const trimmed = cert.trim();
+                                  return (
+                                    <span
+                                      key={trimmed}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        background: "rgba(15, 122, 95, 0.06)",
+                                        color: "var(--accent)",
+                                        fontSize: "10px",
+                                        fontWeight: 600,
+                                        padding: "1px 5px",
+                                        borderRadius: "3px",
+                                        border: "1px solid rgba(15, 122, 95, 0.12)",
+                                      }}
+                                    >
+                                      {trimmed}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -2203,7 +2237,6 @@ export default function Home() {
                           {[
                             ["Price", row.priceScore],
                             ["Qty", row.qtyScore],
-                            ["Reliability", row.reliabilityDisplay],
                             ["Overall", row.overallScore],
                           ].map(([label, value]) => (
                             <div className="score-row" key={label}>
@@ -2237,12 +2270,13 @@ export default function Home() {
                             <th>MOQ</th>
                             <th>Valid Until</th>
                             <th>Score</th>
+                            <th>Certifications</th>
                           </tr>
                         </thead>
                         <tbody>
                           {compareData.otherRows.length === 0 ? (
                             <tr>
-                              <td colSpan={8}>Only top suppliers found for this ingredient.</td>
+                              <td colSpan={9}>Only top suppliers found for this ingredient.</td>
                             </tr>
                           ) : compareData.otherRows.map((row, index) => (
                             <tr key={`${row.supplier_name}-${row.ingredient_name}-table`}>
@@ -2254,6 +2288,35 @@ export default function Home() {
                               <td>{row.moq != null ? `${formatQuantity(Number(row.moq))} ${row.unit}` : "-"}</td>
                               <td>{formatShortDate(row.valid_until)}</td>
                               <td>{row.overallScore}</td>
+                              <td>
+                                {row.certifications ? (
+                                  <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", justifyContent: "center" }}>
+                                    {row.certifications.split(",").map((cert) => {
+                                      const trimmed = cert.trim();
+                                      return (
+                                        <span
+                                          key={trimmed}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            background: "rgba(15, 122, 95, 0.06)",
+                                            color: "var(--accent)",
+                                            fontSize: "10.5px",
+                                            fontWeight: 600,
+                                            padding: "1px 6px",
+                                            borderRadius: "3px",
+                                            border: "1px solid rgba(15, 122, 95, 0.12)",
+                                          }}
+                                        >
+                                          {trimmed}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span style={{ color: "var(--muted)", fontSize: "11px" }}>-</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2265,54 +2328,7 @@ export default function Home() {
             </section>
           )}
 
-          {activeTab === "price-trends" && (
-            <>
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "18px 20px",
-                borderRadius: "10px",
-                border: "1px solid var(--line)",
-                background: "var(--panel)",
-                marginBottom: "24px"
-              }}>
-                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 600, color: "#092f28" }}>Price Trends</h2>
-              </div>
-              <div className="results-panel">
-                <div className="panel-title">
-                  <TrendingUp size={18} />
-                  <h2>Lowest priced items across suppliers</h2>
-                </div>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Supplier</th>
-                        <th>Item</th>
-                        <th>Price/Unit</th>
-                        <th>Qty</th>
-                        <th>Lead Time</th>
-                        <th>MOQ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {supplierRows.slice().sort((left, right) => getBasePrice(left.price_per_unit, left.currency) - getBasePrice(right.price_per_unit, right.currency)).slice(0, 10).map((row, index) => (
-                        <tr key={`${row.supplier_name}-${row.ingredient_name}-${index}`}>
-                          <td>{row.supplier_name}</td>
-                          <td>{row.normalized_name || row.ingredient_name}</td>
-                          <td>{formatMoney(row.price_per_unit, row.currency)}/{row.unit}</td>
-                          <td>{row.available_qty.toLocaleString()} {row.unit}</td>
-                          <td>{row.lead_time_days != null ? `${row.lead_time_days} days` : "-"}</td>
-                          <td>{row.moq != null ? `${formatQuantity(Number(row.moq))} ${row.unit}` : "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
+
 
           {activeTab === "assistant" && (
             <>
@@ -2343,7 +2359,7 @@ export default function Home() {
                         <th>Qty</th>
                         <th>Lead Time</th>
                         <th>MOQ</th>
-                        <th>Reliability</th>
+                        <th>Certifications</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2360,7 +2376,35 @@ export default function Home() {
                             <td>{row.available_qty != null ? `${formatQuantity(Number(row.available_qty))} ${String(row.unit ?? "")}` : "-"}</td>
                             <td>{row.lead_time_days != null ? `${row.lead_time_days} days` : "-"}</td>
                             <td>{row.moq != null ? `${formatQuantity(Number(row.moq))} ${String(row.unit ?? "")}` : "-"}</td>
-                            <td>{row.reliability_score != null ? String(row.reliability_score) : "-"}</td>
+                            <td>
+                              {row.certifications ? (
+                                <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", justifyContent: "center" }}>
+                                  {String(row.certifications).split(",").map((cert) => {
+                                    const trimmed = cert.trim();
+                                    return (
+                                      <span
+                                        key={trimmed}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          background: "rgba(15, 122, 95, 0.06)",
+                                          color: "var(--accent)",
+                                          fontSize: "10.5px",
+                                          fontWeight: 600,
+                                          padding: "1px 6px",
+                                          borderRadius: "3px",
+                                          border: "1px solid rgba(15, 122, 95, 0.12)",
+                                        }}
+                                      >
+                                        {trimmed}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span style={{ color: "var(--muted)", fontSize: "11px" }}>-</span>
+                              )}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -2809,13 +2853,44 @@ export default function Home() {
                                 <span style={{ fontSize: "13.5px", fontWeight: 600, color: "var(--ink)" }}>
                                   {editingAccountId ? "New App Password (leave blank to keep)" : "Gmail App Password"}
                                 </span>
-                                <input
-                                  type="password"
-                                  value={newAccountPassword}
-                                  onChange={(e) => setNewAccountPassword(e.target.value)}
-                                  placeholder={editingAccountId ? "••••••••••••••••" : "16-character Google app password"}
-                                  style={{ padding: "11px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "14px", outline: "none" }}
-                                />
+                                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                  <input
+                                    type={showSettingsPassword ? "text" : "password"}
+                                    value={newAccountPassword}
+                                    onChange={(e) => setNewAccountPassword(e.target.value)}
+                                    placeholder={editingAccountId ? "••••••••••••••••" : "16-character Google app password"}
+                                    style={{
+                                      padding: "11px 44px 11px 14px",
+                                      borderRadius: "8px",
+                                      border: "1px solid var(--line)",
+                                      fontSize: "14px",
+                                      outline: "none",
+                                      width: "100%"
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowSettingsPassword(!showSettingsPassword)}
+                                    style={{
+                                      position: "absolute",
+                                      right: "12px",
+                                      top: "50%",
+                                      transform: "translateY(-50%)",
+                                      background: "none",
+                                      border: "none",
+                                      color: "#66736d",
+                                      cursor: "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      padding: "4px",
+                                      zIndex: 2,
+                                    }}
+                                    aria-label={showSettingsPassword ? "Hide password" : "Show password"}
+                                  >
+                                    {showSettingsPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                  </button>
+                                </div>
                               </label>
 
                               {newAccountProvider === "Custom" && (
@@ -3503,7 +3578,6 @@ export default function Home() {
                       <option value="items">Catalogue items</option>
                       <option value="latest">Latest catalogue</option>
                       <option value="name">Name</option>
-                      <option value="reliability">Reliability</option>
                     </select>
                   </label>
                 </div>
@@ -3517,18 +3591,18 @@ export default function Home() {
                       <th>Email</th>
                       <th>Items</th>
                       <th>Total qty</th>
-                      <th>Reliability</th>
                       <th>Latest catalogue</th>
+                      <th>Certifications</th>
                       <th>View catalogue</th>
                     </tr>
                   </thead>
                   <tbody>
                     {supplierLoading ? (
-                      <tr><td colSpan={8}>Loading supplier data...</td></tr>
+                      <tr><td colSpan={7}>Loading supplier data...</td></tr>
                     ) : supplierError ? (
-                      <tr><td colSpan={8}>{supplierError}</td></tr>
+                      <tr><td colSpan={7}>{supplierError}</td></tr>
                     ) : supplierDirectory.length === 0 ? (
-                      <tr><td colSpan={8}>No suppliers match your search.</td></tr>
+                      <tr><td colSpan={7}>No suppliers match your search.</td></tr>
                     ) : supplierDirectory.map((supplier) => (
                       <tr key={supplier.supplier_name}>
                         <td>
@@ -3542,8 +3616,37 @@ export default function Home() {
                         <td>{supplier.email_domain}</td>
                         <td>{supplier.item_count}</td>
                         <td>{formatQuantity(supplier.total_qty)}</td>
-                        <td>{supplier.reliability_score.toFixed(1)}%</td>
                         <td>{formatRelativeTime(supplier.last_catalog_at)}</td>
+                        <td>
+                          {supplier.certifications ? (
+                            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "center" }}>
+                              {supplier.certifications.split(",").map((cert) => {
+                                const trimmed = cert.trim();
+                                return (
+                                  <span
+                                    key={trimmed}
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      background: "rgba(15, 122, 95, 0.06)",
+                                      color: "var(--accent)",
+                                      fontSize: "11.5px",
+                                      fontWeight: 600,
+                                      padding: "2px 8px",
+                                      borderRadius: "4px",
+                                      border: "1px solid rgba(15, 122, 95, 0.12)",
+                                      letterSpacing: "0.02em",
+                                    }}
+                                  >
+                                    {trimmed}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span style={{ color: "var(--muted)", fontSize: "12px" }}>-</span>
+                          )}
+                        </td>
                         <td>
                           <button className="table-action-button" type="button" onClick={() => { setSelectedCatalogSupplier(supplier.supplier_name); setActiveTab("catalogs"); }}>View catalogue</button>
                         </td>
@@ -3562,6 +3665,26 @@ export default function Home() {
         <aside className="chat-panel">
           <div className="chat-header">
             <h2>ProcuraAI</h2>
+            <button
+              onClick={handleRefreshChat}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--muted)",
+                cursor: "pointer",
+                padding: "6px",
+                borderRadius: "6px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.2s ease",
+              }}
+              title="Refresh Chat"
+              type="button"
+              className="chat-refresh-button"
+            >
+              <RefreshCw size={16} />
+            </button>
           </div>
           <div className="messages">
             {messages.map((message, index) => (

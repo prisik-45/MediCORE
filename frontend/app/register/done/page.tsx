@@ -21,7 +21,10 @@ export default function RegisterDonePage() {
               <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+            <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+              AI-Powered Automated Procurement System<br />
+              <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+            </p>
           </div>
 
           {/* Step indicator */}

@@ -74,7 +74,7 @@ class GroqClient:
                 "currency": row.get("currency"),
                 "qty": row.get("available_qty"),
                 "unit": row.get("unit"),
-                "reliability": row.get("reliability_score"),
+                "certifications": row.get("certifications"),
                 "score": row.get("recommendation_score"),
             }
             for row in rows[:5]

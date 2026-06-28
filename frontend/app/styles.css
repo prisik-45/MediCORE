@@ -639,14 +639,19 @@ table {
 th,
 td {
   padding: 13px 18px;
-  text-align: left;
+  text-align: center;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+
 th {
   background-color: #fafbfc;
-  color: #43544f;
+  color: var(--accent);
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -666,17 +671,6 @@ tbody tr:hover {
   background-color: rgba(15, 122, 95, 0.035) !important;
 }
 
-.suppliers-table td:nth-child(3),
-.suppliers-table td:nth-child(6),
-.suppliers-table td:nth-child(7),
-.suppliers-table td:nth-child(8),
-.suppliers-table th:nth-child(3),
-.suppliers-table th:nth-child(6),
-.suppliers-table th:nth-child(7),
-.suppliers-table th:nth-child(8) {
-  text-align: right;
-}
-
 .chat-panel {
   display: flex;
   flex-direction: column;
@@ -693,7 +687,12 @@ tbody tr:hover {
 }
 
 .chat-header {
-  justify-content: flex-start;
+  justify-content: space-between;
+}
+
+.chat-refresh-button:hover {
+  background: var(--soft) !important;
+  color: var(--accent) !important;
 }
 
 .chat-header h2 {
@@ -1972,7 +1971,7 @@ tbody tr:hover {
   top: calc(100% + 8px);
   background: #ffffff;
   color: var(--ink);
-  border: 1px solid var(--line);
+  border: 1px solid var(--accent);
   font-size: 12px;
   line-height: 1.45;
   padding: 8px 12px;
@@ -2040,4 +2039,98 @@ tbody tr:hover {
   background-color: #ff4d4f; /* Vibrant premium red */
   box-shadow: 0 0 0 2px var(--panel);
   z-index: 10;
+}
+
+/* Mobile Gate Overlay */
+.mobile-gate {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .mobile-gate {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: radial-gradient(circle at center, #1c2622 0%, #111815 100%);
+    z-index: 1000000;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    box-sizing: border-box;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  /* Prevent scrolling on underlying page when gate is active */
+  body {
+    overflow: hidden !important;
+  }
+
+  .mobile-gate-card {
+    background: rgba(25, 35, 30, 0.65);
+    border: 1px solid rgba(15, 122, 95, 0.2);
+    backdrop-filter: blur(16px);
+    border-radius: 16px;
+    padding: 40px 24px;
+    text-align: center;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    animation: fade-in-up 0.5s ease-out;
+  }
+
+  .mobile-gate-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(15, 122, 95, 0.1);
+    color: #108567;
+    margin-bottom: 24px;
+    border: 1px solid rgba(15, 122, 95, 0.25);
+    animation: pulse-icon 2s infinite ease-in-out;
+  }
+
+  .mobile-gate-card h2 {
+    color: #fff;
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    letter-spacing: -0.2px;
+  }
+
+  .mobile-gate-card p {
+    color: #a3b2ab;
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0 0 24px;
+  }
+
+  .mobile-gate-badge {
+    display: inline-block;
+    background: rgba(15, 122, 95, 0.08);
+    color: #108567;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(15, 122, 95, 0.15);
+  }
+
+  @keyframes pulse-icon {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 122, 95, 0.2); }
+    50% { transform: scale(1.05); box-shadow: 0 0 16px 4px rgba(15, 122, 95, 0.15); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 122, 95, 0.2); }
+  }
+
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 }

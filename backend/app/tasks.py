@@ -54,3 +54,4 @@ def process_gmail_notification(payload: dict) -> dict:
         processed = service.process_gmail_push_payload(payload)
     return {"processed": processed}
 
+

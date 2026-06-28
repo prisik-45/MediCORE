@@ -17,8 +17,8 @@ class Supplier(Base):
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     name: Mapped[str] = mapped_column(String(255))
     email_domain: Mapped[str] = mapped_column(String(255), index=True)
-    reliability_score: Mapped[float] = mapped_column(Numeric(5, 2), default=50)
     last_email_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    certifications: Mapped[str | None] = mapped_column(Text)
 
     emails: Mapped[list["CatalogEmail"]] = relationship(back_populates="supplier")
 

@@ -21,7 +21,7 @@ class GmailApiClient:
             .messages()
             .list(
                 userId=self.user_id,
-                q="is:unread has:attachment filename:pdf",
+                q="is:unread has:attachment (filename:pdf OR filename:docx OR filename:doc OR filename:xlsx OR filename:xls OR filename:png OR filename:jpg OR filename:jpeg OR filename:webp OR filename:bmp OR filename:tiff OR filename:txt OR filename:csv)",
                 maxResults=max_results,
             )
             .execute()

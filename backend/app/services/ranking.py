@@ -15,7 +15,7 @@ class SupplierRanker:
         stmt: Select = (
             select(CatalogItem, Supplier)
             .join(Supplier, Supplier.id == CatalogItem.supplier_id)
-            .order_by(asc(CatalogItem.price_per_unit), desc(Supplier.reliability_score))
+            .order_by(asc(CatalogItem.price_per_unit))
             .limit(plan.limit)
         )
         if tenant_id:
@@ -29,12 +29,12 @@ class SupplierRanker:
 
         rows = []
         for item, supplier in self.db.execute(stmt):
-            score = (float(supplier.reliability_score) / 100) - (float(item.price_per_unit) / 1000)
+            score = 100.0 - (float(item.price_per_unit) / 100.0)
             rows.append(
                 {
                     "supplier_name": supplier.name,
                     "email_domain": supplier.email_domain,
-                    "reliability_score": float(supplier.reliability_score),
+                    "certifications": supplier.certifications,
                     "ingredient_name": item.ingredient_name,
                     "normalized_name": item.normalized_name,
                     "price_per_unit": float(item.price_per_unit),

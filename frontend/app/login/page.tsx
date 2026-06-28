@@ -4,7 +4,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, Loader2 } from "lucide-react";
+import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -49,7 +50,10 @@ export default function LoginPage() {
               <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+            <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+              AI-Powered Automated Procurement System<br />
+              <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+            </p>
           </div>
 
           <div className="auth-header-text" style={{ textAlign: "center" }}>
@@ -88,13 +92,22 @@ export default function LoginPage() {
                 <Lock className="field-icon" />
                 <input
                   id="password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  className="password-input"
                   placeholder="••••••••"
                   required
                   autoComplete="current-password"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="password-toggle-btn"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </label>
           </div>
@@ -278,6 +291,33 @@ export default function LoginPage() {
           border-color: #0f7a5f;
           background: #ffffff;
           box-shadow: 0 0 0 3px rgba(15, 122, 95, 0.08);
+        }
+
+        .input-with-icon input.password-input {
+          padding-right: 44px !important;
+        }
+
+        .password-toggle-btn {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none !important;
+          border: none !important;
+          padding: 0 !important;
+          color: #66736d !important;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: color 0.2s;
+          width: auto !important;
+          min-height: unset !important;
+          box-shadow: none !important;
+        }
+
+        .password-toggle-btn:hover {
+          color: #17211c;
         }
 
         .auth-submit-btn {

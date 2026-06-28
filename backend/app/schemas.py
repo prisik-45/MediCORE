@@ -80,5 +80,5 @@ class SupplierSummary(BaseModel):
     id: UUID
     name: str
     email_domain: str
-    reliability_score: float
     last_email_date: datetime | None = None
+    certifications: str | None = None

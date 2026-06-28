@@ -20,8 +20,8 @@ def mock_suppliers() -> list[dict]:
             "id": str(row.id),
             "name": row.name,
             "email_domain": row.email_domain,
-            "reliability_score": float(row.reliability_score),
             "last_email_date": row.last_email_date,
+            "certifications": row.certifications,
         }
         for row in sorted(suppliers, key=lambda supplier: supplier.last_email_date, reverse=True)
     ]
@@ -49,8 +49,8 @@ def list_suppliers(
                 "id": str(row.id),
                 "name": row.name,
                 "email_domain": row.email_domain,
-                "reliability_score": float(row.reliability_score),
                 "last_email_date": row.last_email_date,
+                "certifications": row.certifications,
             }
             for row in rows
         ]

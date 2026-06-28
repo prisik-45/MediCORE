@@ -33,7 +33,7 @@ export function middleware(request: NextRequest) {
   
   // Exclude static assets, next internals, etc.
   if (
-    pathname.startsWith("/_next") ||
+    pathname.startsWith("/_") ||
     pathname.startsWith("/api") ||
     pathname.includes(".") ||
     pathname === "/favicon.ico"

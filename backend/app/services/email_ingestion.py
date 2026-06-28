@@ -430,7 +430,6 @@ class EmailIngestionService:
             tenant_id=tenant_id or uuid4(),
             name=supplier_name,
             email_domain=domain,
-            reliability_score=50,
         )
         self.db.add(supplier)
         self.db.flush()
@@ -458,7 +457,7 @@ class EmailIngestionService:
 
             filename_lower = filename.lower()
             file_ext = Path(filename_lower).suffix
-            supported_exts = (".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".txt", ".csv")
+            supported_exts = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".txt", ".csv")
             if not file_ext or file_ext not in supported_exts:
                 continue
 
@@ -530,8 +529,17 @@ class EmailIngestionService:
             from backend.app.services.pdf_extract import extract_pdf_text
             return extract_pdf_text(file_path)
 
-        elif ext == ".docx":
-            return self._extract_docx_text(file_path)
+        elif ext in (".docx", ".doc", ".xlsx", ".xls"):
+            try:
+                from markitdown import MarkItDown
+                md = MarkItDown()
+                result = md.convert(str(file_path))
+                return result.markdown
+            except Exception as e:
+                logger.exception("Error extracting text using markitdown from %s: %s", file_path.name, e)
+                if ext == ".docx":
+                    return self._extract_docx_text(file_path)
+                return ""
 
         elif ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"):
             return self._extract_image_text(file_path)

@@ -16,7 +16,9 @@ import {
   XCircle,
   HelpCircle,
   Loader2,
-  Settings
+  Settings,
+  Eye,
+  EyeOff
 } from "lucide-react";
 
 export default function EmailSetupPage() {
@@ -25,6 +27,7 @@ export default function EmailSetupPage() {
   const [provider, setProvider] = useState("Gmail");
   const [emailAddress, setEmailAddress] = useState("");
   const [appPassword, setAppPassword] = useState("");
+  const [showAppPassword, setShowAppPassword] = useState(false);
   
   // Filters state
   const [showFilters, setShowFilters] = useState(false);
@@ -190,7 +193,10 @@ export default function EmailSetupPage() {
               <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+            <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+              AI-Powered Automated Procurement System<br />
+              <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+            </p>
           </div>
 
           {/* Step indicator */}
@@ -263,15 +269,24 @@ export default function EmailSetupPage() {
                 <Key className="field-icon" size={18} />
                 <input
                   id="appPassword"
-                  type="password"
+                  type={showAppPassword ? "text" : "password"}
                   value={appPassword}
                   onChange={(e) => {
                     setAppPassword(e.target.value);
                     setTestResult(null); // Reset test status when password changes
                   }}
+                  className="password-input"
                   placeholder="xxxx xxxx xxxx xxxx"
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowAppPassword(!showAppPassword)}
+                  className="password-toggle-btn"
+                  aria-label={showAppPassword ? "Hide password" : "Show password"}
+                >
+                  {showAppPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
 
@@ -796,6 +811,34 @@ export default function EmailSetupPage() {
 
         .input-with-icon input:focus + .field-icon {
           color: #0f7a5f !important;
+        }
+
+        .input-with-icon input.password-input {
+          padding-right: 44px !important;
+        }
+
+        .password-toggle-btn {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none !important;
+          border: none !important;
+          padding: 0 !important;
+          color: #66736d !important;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: color 0.2s;
+          z-index: 10;
+          width: auto !important;
+          min-height: unset !important;
+          box-shadow: none !important;
+        }
+
+        .password-toggle-btn:hover {
+          color: #17211c;
         }
 
         .input-with-icon input[readonly] {

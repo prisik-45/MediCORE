@@ -4,7 +4,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, User, Briefcase, Loader2, Info } from "lucide-react";
+import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, User, Briefcase, Loader2, Info, Eye, EyeOff } from "lucide-react";
 
 export default function RegisterStep1Page() {
   const router = useRouter();
@@ -16,6 +16,8 @@ export default function RegisterStep1Page() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [signUpSuccess, setSignUpSuccess] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault();
@@ -82,7 +84,10 @@ export default function RegisterStep1Page() {
                 <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               </div>
               <h1>MediCORE</h1>
-              <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+              <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+                AI-Powered Automated Procurement System<br />
+                <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+              </p>
             </div>
 
             <div style={{
@@ -128,7 +133,10 @@ export default function RegisterStep1Page() {
               <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <h1>MediCORE</h1>
-            <p className="brand-tagline">By Tarkshy Consultancy Services</p>
+            <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+              AI-Powered Automated Procurement System<br />
+              <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+            </p>
           </div>
 
           {/* Step indicator */}
@@ -220,13 +228,22 @@ export default function RegisterStep1Page() {
                   <Lock className="field-icon" />
                   <input
                     id="password"
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    className="password-input"
                     placeholder="••••••••"
                     required
                     autoComplete="new-password"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="password-toggle-btn"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
               </label>
             </div>
@@ -238,13 +255,22 @@ export default function RegisterStep1Page() {
                   <Lock className="field-icon" />
                   <input
                     id="confirmPassword"
-                    type="password"
+                    type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="password-input"
                     placeholder="••••••••"
                     required
                     autoComplete="new-password"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="password-toggle-btn"
+                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
               </label>
               <div className="hint-box">
@@ -507,6 +533,33 @@ export default function RegisterStep1Page() {
           border-color: #0f7a5f;
           background: #ffffff;
           box-shadow: 0 0 0 3px rgba(15, 122, 95, 0.08);
+        }
+
+        .input-with-icon input.password-input {
+          padding-right: 44px !important;
+        }
+
+        .password-toggle-btn {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none !important;
+          border: none !important;
+          padding: 0 !important;
+          color: #66736d !important;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: color 0.2s;
+          width: auto !important;
+          min-height: unset !important;
+          box-shadow: none !important;
+        }
+
+        .password-toggle-btn:hover {
+          color: #17211c;
         }
 
         .hint-box {

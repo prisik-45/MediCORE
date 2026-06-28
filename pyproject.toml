@@ -23,6 +23,10 @@ dependencies = [
     "supabase>=2.8.0",
     "uvicorn[standard]>=0.30.6",
     "python-pptx>=1.0.2",
+    "pandas",
+    "openpyxl",
+    "xlrd",
+    "mammoth",
 ]
 
 [project.optional-dependencies]

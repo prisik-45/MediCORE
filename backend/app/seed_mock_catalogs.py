@@ -52,18 +52,31 @@ def build_catalogs() -> tuple[list[Supplier], list[CatalogEmail], list[CatalogIt
     emails: list[CatalogEmail] = []
     catalog_items: list[CatalogItem] = []
 
+    cert_list = [
+        "ISO, GMP, Halal",
+        "ISO, GMP",
+        "ISO, GMP",
+        "cGMP, FDA",
+        "ISO, GMP, Halal",
+        "ISO, GMP",
+        "ISO, GMP",
+        "cGMP, FDA",
+        "ISO, GMP",
+        "ISO, GMP, Halal",
+    ]
+
     for catalog_no, (supplier_name, domain) in enumerate(SUPPLIERS, start=1):
         supplier_id = stable_uuid(f"supplier:{domain}")
         received_at = today - timedelta(days=rng.randint(0, 21), hours=rng.randint(1, 9))
-        reliability = round(rng.uniform(71, 96), 2)
+        certs = cert_list[(catalog_no - 1) % len(cert_list)]
         suppliers.append(
             Supplier(
                 id=supplier_id,
                 tenant_id=TENANT_ID,
                 name=supplier_name,
                 email_domain=domain,
-                reliability_score=reliability,
                 last_email_date=received_at,
+                certifications=certs,
             )
         )
 

@@ -106,7 +106,7 @@ class NaturalLanguageQueryEngine:
                 f"{best['price_per_unit']} {best['currency']}/{best['unit']}, "
                 f"{best['available_qty']} {best['unit']} available."
             ),
-            f"Why: lowest ranked price with reliability {best['reliability_score']}.",
+            f"Why: lowest ranked price.",
         ]
         if len(rows) > 1:
             next_best = rows[1]
