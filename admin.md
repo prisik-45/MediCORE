@@ -389,7 +389,7 @@ The backend should:
 
 # Security Requirements
 
-* Passwords must be hashed using bcrypt.
+* Passwords must be hashed using same technique used previously.
 * Activation links expire after 2 hours.
 * Activation tokens are single-use.
 * App Passwords must be encrypted before database storage.

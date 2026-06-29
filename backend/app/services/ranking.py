@@ -12,12 +12,25 @@ class SupplierRanker:
 
     def ranked_items(self, plan: QueryPlan, tenant_id: Any | None = None) -> list[dict]:
         from uuid import UUID
+        from backend.app.models import CatalogEmail
+        from backend.app.config import get_settings
+        from sqlalchemy import or_
+        
+        settings = get_settings()
         stmt: Select = (
-            select(CatalogItem, Supplier)
+            select(CatalogItem, Supplier, CatalogEmail.received_at)
             .join(Supplier, Supplier.id == CatalogItem.supplier_id)
+            .outerjoin(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
             .order_by(asc(CatalogItem.price_per_unit))
             .limit(plan.limit)
         )
+        if not settings.mock_data_enabled:
+            stmt = stmt.where(
+                or_(
+                    CatalogEmail.raw_email_id.is_(None),
+                    CatalogEmail.raw_email_id.not_like("core-mock-catalog-%")
+                )
+            )
         if tenant_id:
             stmt = stmt.where(CatalogItem.tenant_id == (UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id))
         if plan.normalized_name:
@@ -28,7 +41,7 @@ class SupplierRanker:
             stmt = stmt.where(CatalogItem.unit == plan.unit)
 
         rows = []
-        for item, supplier in self.db.execute(stmt):
+        for item, supplier, received_at in self.db.execute(stmt):
             score = 100.0 - (float(item.price_per_unit) / 100.0)
             rows.append(
                 {
@@ -42,6 +55,7 @@ class SupplierRanker:
                     "available_qty": float(item.available_qty),
                     "unit": item.unit,
                     "valid_until": item.valid_until.isoformat() if item.valid_until else None,
+                    "received_at": received_at.isoformat() if received_at else None,
                     "recommendation_score": round(score, 4),
                 }
             )

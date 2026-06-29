@@ -30,8 +30,9 @@ def mock_catalog_emails(limit: int) -> list[dict]:
 
 
 def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
-    suppliers, _, items = build_catalogs()
+    suppliers, emails, items = build_catalogs()
     supplier_names = {supplier.id: supplier.name for supplier in suppliers}
+    email_received_dates = {email.id: email.received_at for email in emails}
     filtered_items = [item for item in items if not q or q.lower() in item.normalized_name.lower()]
     return [
         {
@@ -48,6 +49,7 @@ def mock_catalog_items(q: str | None, limit: int) -> list[dict]:
             "lead_time_days": getattr(item, "lead_time_days", None) if getattr(item, "lead_time_days", None) is not None else (item.raw_payload or {}).get("lead_time_days"),
             "moq": getattr(item, "moq", None) if getattr(item, "moq", None) is not None else (item.raw_payload or {}).get("moq"),
             "pack_size": (item.raw_payload or {}).get("pack_size"),
+            "received_at": email_received_dates.get(item.catalog_email_id) if getattr(item, "catalog_email_id", None) else None,
         }
         for item in sorted(filtered_items, key=lambda row: row.price_per_unit)[:limit]
     ]
@@ -97,8 +99,9 @@ def list_catalog_items(
     settings = get_settings()
     user_uuid = UUID(current_user["id"])
     stmt = (
-        select(CatalogItem, Supplier.name)
+        select(CatalogItem, Supplier.name, CatalogEmail.received_at)
         .join(Supplier, Supplier.id == CatalogItem.supplier_id)
+        .outerjoin(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
         .where(CatalogItem.tenant_id == user_uuid)
     )
     if not settings.mock_data_enabled:
@@ -123,8 +126,9 @@ def list_catalog_items(
                 "lead_time_days": getattr(item, "lead_time_days", None) if getattr(item, "lead_time_days", None) is not None else (item.raw_payload or {}).get("lead_time_days"),
                 "moq": getattr(item, "moq", None) if getattr(item, "moq", None) is not None else (item.raw_payload or {}).get("moq"),
                 "pack_size": (item.raw_payload or {}).get("pack_size"),
+                "received_at": received_at,
             }
-            for item, supplier_name in db.execute(stmt)
+            for item, supplier_name, received_at in db.execute(stmt)
         ]
     except SQLAlchemyError:
         if not settings.mock_data_enabled:

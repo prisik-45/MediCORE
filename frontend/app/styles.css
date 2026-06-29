@@ -1379,10 +1379,7 @@ tbody tr:hover {
   letter-spacing: 0.08em;
 }
 
-.compare-table-panel td:last-child {
-  color: #29b78f;
-  font-weight: 500;
-}
+
 
 .compare-empty {
   padding: 24px;
@@ -1641,11 +1638,7 @@ tbody tr:hover {
   background: var(--accent);
 }
 
-.catalog-table td:nth-child(3),
-.catalog-table td:nth-child(4),
-.catalog-table td:nth-child(5) {
-  color: #006d57;
-}
+
 
 .catalog-status {
   display: inline-flex;

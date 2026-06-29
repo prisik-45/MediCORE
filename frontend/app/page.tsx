@@ -52,6 +52,7 @@ type SupplierItem = {
   moq?: number | null;
   pack_size?: string | null;
   catalog_email_id?: string | null;
+  received_at?: string | null;
 };
 
 type SupplierApiRow = {
@@ -266,6 +267,16 @@ function formatShortDate(value: string | null | undefined): string {
   return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
+function formatDDMMYY(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+}
+
 function supplierInitials(name: string): string {
   return name
     .split(" ")
@@ -338,6 +349,7 @@ export default function Home() {
   const [supplierError, setSupplierError] = useState<string | null>(null);
   const [selectedInboxSupplier, setSelectedInboxSupplier] = useState("");
   const [selectedCatalogSupplier, setSelectedCatalogSupplier] = useState("");
+  const [selectedCatalogEmailId, setSelectedCatalogEmailId] = useState<string | null>(null);
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierSort, setSupplierSort] = useState<SupplierSort>("latest");
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -666,6 +678,7 @@ export default function Home() {
         best_item: sortedByPrice[0],
         total_qty: totalQty,
         last_catalog_at: latestEmail?.received_at ?? items[0]?.valid_until ?? meta?.last_email_date ?? null,
+        latest_email_id: latestEmail?.id ?? null,
         subject: latestEmail?.subject ?? "Catalogue email received",
         items: sortedByPrice,
         certifications: meta?.certifications ?? null,
@@ -689,12 +702,38 @@ export default function Home() {
     return supplierDirectory.find((supplier) => supplier.supplier_name === selectedCatalogSupplier) ?? supplierDirectory[0];
   }, [selectedCatalogSupplier, supplierDirectory]);
 
+  const supplierEmails = useMemo(() => {
+    if (!selectedCatalogSupplier) return [];
+    return catalogEmails.filter((email) => email.supplier_name === selectedCatalogSupplier)
+      .sort((left, right) => new Date(right.received_at).getTime() - new Date(left.received_at).getTime());
+  }, [catalogEmails, selectedCatalogSupplier]);
+
+  const activeCatalogEmail = useMemo(() => {
+    return supplierEmails.find((e) => e.id === selectedCatalogEmailId) ?? supplierEmails[0] ?? null;
+  }, [supplierEmails, selectedCatalogEmailId]);
+
+  useEffect(() => {
+    if (supplierEmails.length > 0) {
+      const exists = supplierEmails.some((e) => e.id === selectedCatalogEmailId);
+      if (!exists) {
+        setSelectedCatalogEmailId(supplierEmails[0].id);
+      }
+    } else {
+      setSelectedCatalogEmailId(null);
+    }
+  }, [supplierEmails, selectedCatalogEmailId]);
+
   const selectedCatalogItems = useMemo(() => {
     if (!selectedCatalog) return [];
     const search = catalogSearch.trim().toLowerCase();
-    const minQty = Math.min(...selectedCatalog.items.map((item) => item.available_qty));
-    const bestPrice = Math.min(...selectedCatalog.items.map((item) => item.price_per_unit));
-    return selectedCatalog.items.filter((item) => {
+    const filteredByEmail = selectedCatalogEmailId
+      ? selectedCatalog.items.filter((item) => item.catalog_email_id === selectedCatalogEmailId)
+      : selectedCatalog.items;
+
+    if (filteredByEmail.length === 0) return [];
+    const minQty = Math.min(...filteredByEmail.map((item) => item.available_qty));
+    const bestPrice = Math.min(...filteredByEmail.map((item) => item.price_per_unit));
+    return filteredByEmail.filter((item) => {
       const matchesSearch = !search
         || item.ingredient_name.toLowerCase().includes(search)
         || item.normalized_name.toLowerCase().includes(search);
@@ -703,7 +742,14 @@ export default function Home() {
       if (catalogFilter === "low-stock") return item.available_qty <= minQty * 1.35;
       return true;
     });
-  }, [catalogFilter, catalogSearch, selectedCatalog]);
+  }, [catalogFilter, catalogSearch, selectedCatalog, selectedCatalogEmailId]);
+
+  const emailItemsCount = useMemo(() => {
+    if (!selectedCatalog) return 0;
+    return selectedCatalogEmailId
+      ? selectedCatalog.items.filter((item) => item.catalog_email_id === selectedCatalogEmailId).length
+      : selectedCatalog.items.length;
+  }, [selectedCatalog, selectedCatalogEmailId]);
 
   const availableIngredients = useMemo(() => {
     return Array.from(new Set(supplierRows.map((row) => row.normalized_name || row.ingredient_name)))
@@ -1984,13 +2030,14 @@ export default function Home() {
                                 <th>Qty Avail.</th>
                                 <th>Lead Time</th>
                                 <th>MOQ</th>
+                                <th>Date</th>
                                 <th>Status</th>
                               </tr>
                             </thead>
                             <tbody>
                               {selectedInboxThread.items.length === 0 ? (
                                 <tr>
-                                  <td colSpan={6}>No catalogue items were extracted for this supplier.</td>
+                                  <td colSpan={7}>No catalogue items were extracted for this supplier.</td>
                                 </tr>
                               ) : (
                                 selectedInboxThread.items.slice(0, 4).map((item, index) => {
@@ -2002,6 +2049,7 @@ export default function Home() {
                                       <td>{item.available_qty.toLocaleString()} {item.unit}</td>
                                       <td>{item.lead_time_days != null ? `${item.lead_time_days} days` : "-"}</td>
                                       <td>{item.moq != null ? `${formatQuantity(Number(item.moq))} ${item.unit}` : "-"}</td>
+                                      <td>{formatDDMMYY(selectedInboxThread.received_at)}</td>
                                       <td>{item.price_per_unit === bestPrice ? "Best price" : "-"}</td>
                                     </tr>
                                   );
@@ -2014,7 +2062,11 @@ export default function Home() {
 
                       <div className="inbox-actions">
                         <button type="button" onClick={() => setActiveTab("compare")}>Compare suppliers</button>
-                        <button type="button" onClick={() => { setSelectedCatalogSupplier(selectedInboxThread.supplier_name); setActiveTab("catalogs"); }}>View full catalogue</button>
+                        <button type="button" onClick={() => {
+                          setSelectedCatalogSupplier(selectedInboxThread.supplier_name);
+                          setSelectedCatalogEmailId(selectedInboxThread.id);
+                          setActiveTab("catalogs");
+                        }}>View full catalogue</button>
                         <button type="button" onClick={() => setActiveTab("assistant")}>Ask AI</button>
                       </div>
                     </>
@@ -2031,15 +2083,47 @@ export default function Home() {
                 <>
                   <div className="catalog-topline">
                     <button type="button" onClick={() => setActiveTab("suppliers")}>Suppliers</button>
-                    <span>{selectedCatalog.supplier_name} - {formatShortDate(selectedCatalog.last_catalog_at)}</span>
+                    <span>{selectedCatalog.supplier_name} {activeCatalogEmail ? `- ${formatDDMMYY(activeCatalogEmail.received_at)}` : ""}</span>
                   </div>
 
-                  <div className="catalog-supplier-head">
-                    <div className="supplier-badge">{supplierInitials(selectedCatalog.supplier_name)}</div>
-                    <div>
-                      <h2>{selectedCatalog.supplier_name}</h2>
-                      <p>{selectedCatalog.subject} - {selectedCatalog.item_count} items - extracted {formatRelativeTime(selectedCatalog.last_catalog_at)}</p>
+                  <div className="catalog-supplier-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                    <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                      <div className="supplier-badge">{supplierInitials(selectedCatalog.supplier_name)}</div>
+                      <div>
+                        <h2>{selectedCatalog.supplier_name}</h2>
+                        {activeCatalogEmail ? (
+                          <p>{activeCatalogEmail.subject || "Catalogue email"} — {emailItemsCount} items — received {formatDDMMYY(activeCatalogEmail.received_at)}</p>
+                        ) : (
+                          <p>{selectedCatalog.item_count} items total</p>
+                        )}
+                      </div>
                     </div>
+                    {supplierEmails.length > 1 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "13px", fontWeight: 600, color: "#4f927f" }}>Catalogue Date:</span>
+                        <select
+                          value={selectedCatalogEmailId || ""}
+                          onChange={(event) => setSelectedCatalogEmailId(event.target.value || null)}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid var(--line)",
+                            background: "#fff",
+                            fontSize: "13px",
+                            fontWeight: 500,
+                            color: "var(--text)",
+                            cursor: "pointer",
+                            outline: "none",
+                          }}
+                        >
+                          {supplierEmails.map((email) => (
+                            <option key={email.id} value={email.id}>
+                              {formatDDMMYY(email.received_at)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
 
                   <div className="catalog-controls">
@@ -2048,7 +2132,7 @@ export default function Home() {
                       <input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search ingredients..." />
                     </label>
                     <div className="catalog-filter-tabs">
-                      <button className={catalogFilter === "all" ? "active" : ""} type="button" onClick={() => setCatalogFilter("all")}>All ({selectedCatalog.items.length})</button>
+                      <button className={catalogFilter === "all" ? "active" : ""} type="button" onClick={() => setCatalogFilter("all")}>All ({emailItemsCount})</button>
                       <button className={catalogFilter === "best" ? "active" : ""} type="button" onClick={() => setCatalogFilter("best")}>Best deals</button>
                       <button className={catalogFilter === "low-stock" ? "active" : ""} type="button" onClick={() => setCatalogFilter("low-stock")}>Low stock</button>
                     </div>
@@ -2063,7 +2147,7 @@ export default function Home() {
                           <th>Qty avail.</th>
                           <th>Lead Time</th>
                           <th>MOQ</th>
-                          <th>Valid until</th>
+                          <th>Date</th>
                           <th>Status</th>
                         </tr>
                       </thead>
@@ -2087,7 +2171,7 @@ export default function Home() {
                               <td>{formatQuantity(item.available_qty)} {item.unit}</td>
                               <td>{item.lead_time_days != null ? `${item.lead_time_days} days` : "-"}</td>
                               <td>{item.moq != null ? `${formatQuantity(Number(item.moq))} ${item.unit}` : "-"}</td>
-                              <td>{formatShortDate(item.valid_until)}</td>
+                              <td>{formatDDMMYY(item.received_at)}</td>
                               <td><span className={`catalog-status ${status === "Low stock" ? "warning" : status === "Best price" ? "best" : ""}`}>{status}</span></td>
                             </tr>
                           );
@@ -2224,10 +2308,6 @@ export default function Home() {
                             <span>Units avail.</span>
                           </div>
                           <div>
-                            <strong>{formatShortDate(row.valid_until)}</strong>
-                            <span>Valid until</span>
-                          </div>
-                          <div>
                             <strong>{row.lead_time_days ? `${row.lead_time_days} days` : "-"}</strong>
                             <span>Lead time</span>
                           </div>
@@ -2251,7 +2331,11 @@ export default function Home() {
                           ))}
                         </div>
 
-                        <button className="view-catalog-button" type="button" onClick={() => { setSelectedCatalogSupplier(row.supplier_name); setActiveTab("catalogs"); }}>View catalogue</button>
+                        <button className="view-catalog-button" type="button" onClick={() => {
+                          setSelectedCatalogSupplier(row.supplier_name);
+                          setSelectedCatalogEmailId(row.catalog_email_id ?? null);
+                          setActiveTab("catalogs");
+                        }}>View catalogue</button>
                       </article>
                     ))}
                   </div>
@@ -2268,7 +2352,7 @@ export default function Home() {
                             <th>Available Qty</th>
                             <th>Lead Time</th>
                             <th>MOQ</th>
-                            <th>Valid Until</th>
+                            <th>Date</th>
                             <th>Score</th>
                             <th>Certifications</th>
                           </tr>
@@ -2286,7 +2370,7 @@ export default function Home() {
                               <td>{formatQuantity(row.available_qty)} {row.unit}</td>
                               <td>{row.lead_time_days != null ? `${row.lead_time_days} days` : "-"}</td>
                               <td>{row.moq != null ? `${formatQuantity(Number(row.moq))} ${row.unit}` : "-"}</td>
-                              <td>{formatShortDate(row.valid_until)}</td>
+                              <td>{formatDDMMYY(row.received_at)}</td>
                               <td>{row.overallScore}</td>
                               <td>
                                 {row.certifications ? (
@@ -2359,13 +2443,14 @@ export default function Home() {
                         <th>Qty</th>
                         <th>Lead Time</th>
                         <th>MOQ</th>
+                        <th>Date</th>
                         <th>Certifications</th>
                       </tr>
                     </thead>
                     <tbody>
                       {assistantRows.length === 0 ? (
                         <tr>
-                          <td colSpan={7}>Results appear after ProcuraAI returns supplier data.</td>
+                          <td colSpan={8}>Results appear after ProcuraAI returns supplier data.</td>
                         </tr>
                       ) : (
                         assistantRows.map((row, index) => (
@@ -2376,6 +2461,7 @@ export default function Home() {
                             <td>{row.available_qty != null ? `${formatQuantity(Number(row.available_qty))} ${String(row.unit ?? "")}` : "-"}</td>
                             <td>{row.lead_time_days != null ? `${row.lead_time_days} days` : "-"}</td>
                             <td>{row.moq != null ? `${formatQuantity(Number(row.moq))} ${String(row.unit ?? "")}` : "-"}</td>
+                            <td>{formatDDMMYY(row.received_at as string)}</td>
                             <td>
                               {row.certifications ? (
                                 <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", justifyContent: "center" }}>
@@ -3591,7 +3677,7 @@ export default function Home() {
                       <th>Email</th>
                       <th>Items</th>
                       <th>Total qty</th>
-                      <th>Latest catalogue</th>
+                      <th>Date</th>
                       <th>Certifications</th>
                       <th>View catalogue</th>
                     </tr>
@@ -3616,7 +3702,7 @@ export default function Home() {
                         <td>{supplier.email_domain}</td>
                         <td>{supplier.item_count}</td>
                         <td>{formatQuantity(supplier.total_qty)}</td>
-                        <td>{formatRelativeTime(supplier.last_catalog_at)}</td>
+                        <td>{formatDDMMYY(supplier.last_catalog_at)}</td>
                         <td>
                           {supplier.certifications ? (
                             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "center" }}>
@@ -3648,7 +3734,11 @@ export default function Home() {
                           )}
                         </td>
                         <td>
-                          <button className="table-action-button" type="button" onClick={() => { setSelectedCatalogSupplier(supplier.supplier_name); setActiveTab("catalogs"); }}>View catalogue</button>
+                          <button className="table-action-button" type="button" onClick={() => {
+                            setSelectedCatalogSupplier(supplier.supplier_name);
+                            setSelectedCatalogEmailId(supplier.latest_email_id);
+                            setActiveTab("catalogs");
+                          }}>View catalogue</button>
                         </td>
                       </tr>
                     ))}

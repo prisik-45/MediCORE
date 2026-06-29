@@ -43,6 +43,7 @@ def list_suppliers(
         )
         if not settings.mock_data_enabled:
             stmt = stmt.where(Supplier.email_domain.not_like("%.example"))
+            stmt = stmt.where(CatalogEmail.raw_email_id.not_like("core-mock-catalog-%"))
         rows = db.execute(stmt.order_by(Supplier.last_email_date.desc().nullslast())).scalars()
         return [
             {
