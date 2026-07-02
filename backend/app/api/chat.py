@@ -22,10 +22,17 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         try:
             from uuid import UUID
             from backend.app.db import get_supabase
+            from backend.app.models import Profile
             supabase_client = get_supabase()
             response = supabase_client.auth.get_user(token)
             if response and response.user:
-                tenant_id = UUID(response.user.id)
+                user_uuid = UUID(response.user.id)
+                # Load profile to fetch shared tenant_id
+                profile = db.query(Profile).filter(Profile.id == user_uuid).first()
+                if profile and profile.tenant_id:
+                    tenant_id = profile.tenant_id
+                else:
+                    tenant_id = user_uuid
         except Exception as e:
             logger.error(f"WebSocket authentication failed: {e}")
             await websocket.send_json({"type": "error", "message": "Authentication failed. Connection closed."})

@@ -1,13 +1,30 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Check, ArrowRight } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function RegisterDonePage() {
   const router = useRouter();
+  const [role, setRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setRole(session.user?.user_metadata?.role || "employee");
+      }
+    });
+  }, []);
+
+  const isAdmin = role === "admin";
 
   function handleGoToDashboard() {
-    router.push("/");
+    if (isAdmin) {
+      router.push("/admin");
+    } else {
+      router.push("/");
+    }
     router.refresh();
   }
 
@@ -33,16 +50,28 @@ export default function RegisterDonePage() {
               <div className="step-circle">1</div>
               <span>Account</span>
             </div>
-            <div className="step-line completed"></div>
-            <div className="step completed">
-              <div className="step-circle">2</div>
-              <span>Email Setup</span>
-            </div>
-            <div className="step-line completed"></div>
-            <div className="step active">
-              <div className="step-circle">3</div>
-              <span>Done</span>
-            </div>
+            {!isAdmin ? (
+              <>
+                <div className="step-line completed"></div>
+                <div className="step completed">
+                  <div className="step-circle">2</div>
+                  <span>Email Setup</span>
+                </div>
+                <div className="step-line completed"></div>
+                <div className="step active">
+                  <div className="step-circle">3</div>
+                  <span>Done</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="step-line completed"></div>
+                <div className="step active">
+                  <div className="step-circle">2</div>
+                  <span>Done</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="success-content">
@@ -54,11 +83,18 @@ export default function RegisterDonePage() {
               Your MediCORE account is successfully configured and active.
             </p>
             <div className="success-details-card">
-              <p>
-                We have connected your supplier inbox and set up automated scanning. Our AI engine will now
-                regularly parse incoming supplier catalogs, extract PDF product items, and make them searchable
-                directly in your dashboard!
-              </p>
+              {isAdmin ? (
+                <p>
+                  Your company workspace has been successfully initialized. You can now access the Admin Portal
+                  to invite your employees, monitor data usage metrics, inspect database telemetry, and manage active session controls.
+                </p>
+              ) : (
+                <p>
+                  We have connected your supplier inbox and set up automated scanning. Our AI engine will now
+                  regularly parse incoming supplier catalogs, extract PDF product items, and make them searchable
+                  directly in your dashboard!
+                </p>
+              )}
             </div>
           </div>
 
@@ -67,7 +103,7 @@ export default function RegisterDonePage() {
             className="auth-submit-btn"
             onClick={handleGoToDashboard}
           >
-            Go to Dashboard
+            {isAdmin ? "Go to Admin Portal" : "Go to Dashboard"}
             <ArrowRight size={16} />
           </button>
         </div>

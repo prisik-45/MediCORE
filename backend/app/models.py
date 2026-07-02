@@ -65,6 +65,8 @@ class Profile(Base):
     full_name: Mapped[str | None] = mapped_column(Text)
     organisation: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str | None] = mapped_column(Text, default="member")
+    tenant_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(Text, default="Active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -113,4 +115,41 @@ class EmailSyncSetting(Base):
     keyword_filters: Mapped[str] = mapped_column(Text, default="catalog, catalogue, price, offer, quote")
     pending_approvals: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmployeeInvitation(Base):
+    __tablename__ = "employee_invitations"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    admin_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    token: Mapped[str] = mapped_column(Text, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(50), default="Pending Activation")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AIQueryLog(Base):
+    __tablename__ = "ai_query_logs"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True))
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True))
+    query_text: Mapped[str] = mapped_column(Text)
+    operation_type: Mapped[str | None] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    token: Mapped[str] = mapped_column(Text, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(50), default="Pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
 

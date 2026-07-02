@@ -43,25 +43,41 @@ export default function EmailSetupPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for active session and pre-fill email address
+    // Check for active session and pre-fill email address or redirect if admin
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user?.email) {
-        setEmailAddress(session.user.email);
+      if (session) {
+        setSession(session);
+        const role = session.user?.user_metadata?.role;
+        if (role === "admin") {
+          router.push("/register/done");
+          return;
+        }
+        if (session.user?.email) {
+          setEmailAddress(session.user.email);
+        }
+      } else {
+        router.push("/login");
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user?.email) {
-        setEmailAddress(session.user.email);
+      if (session) {
+        setSession(session);
+        const role = session.user?.user_metadata?.role;
+        if (role === "admin") {
+          router.push("/register/done");
+          return;
+        }
+        if (session.user?.email) {
+          setEmailAddress(session.user.email);
+        }
       }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [router]);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || (() => {
     if (typeof window === "undefined") {

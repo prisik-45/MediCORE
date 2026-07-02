@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [loginRole, setLoginRole] = useState<"admin" | "employee">("admin");
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -31,8 +32,27 @@ export default function LoginPage() {
         return;
       }
 
-      // Session will be synced to cookies via AuthSync, redirect to dashboard
-      router.push("/");
+      const role = data.user?.user_metadata?.role;
+      
+      if (loginRole === "admin" && role !== "admin") {
+        await supabase.auth.signOut();
+        setError("This account is not configured as an administrator.");
+        setLoading(false);
+        return;
+      }
+      
+      if (loginRole === "employee" && role === "admin") {
+        await supabase.auth.signOut();
+        setError("This account is configured as an administrator. Please select Admin Login.");
+        setLoading(false);
+        return;
+      }
+
+      if (role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/");
+      }
       router.refresh();
     } catch (err) {
       setError("An unexpected error occurred. Please try again.");
@@ -56,20 +76,80 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <div className="auth-header-text" style={{ textAlign: "center" }}>
-            <h2>Welcome Back</h2>
+          <div className="auth-header-text" style={{ textAlign: "center", marginBottom: "20px" }}>
+            <h2>Sign In</h2>
+            <p style={{ fontSize: "13px", color: "#66736d", marginTop: "4px" }}>
+              {loginRole === "admin" 
+                ? "Enter your credentials to access the Admin Console" 
+                : "Enter your credentials to access the Employee Workspace"}
+            </p>
           </div>
 
           {error && (
-            <div className="auth-error-box">
+            <div className="auth-error-box" style={{ marginBottom: "20px" }}>
               <ShieldCheck className="error-icon" />
               <span>{error}</span>
             </div>
           )}
 
+          {/* Segmented Selector for Role Selection */}
+          <div style={{
+            display: "flex",
+            background: "#f4f7f5",
+            padding: "4px",
+            borderRadius: "10px",
+            border: "1px solid #dce4df",
+            marginBottom: "20px"
+          }}>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginRole("admin");
+                setError(null);
+              }}
+              style={{
+                flex: 1,
+                padding: "8px 16px",
+                border: "none",
+                borderRadius: "8px",
+                background: loginRole === "admin" ? "#ffffff" : "transparent",
+                color: loginRole === "admin" ? "#0f7a5f" : "#66736d",
+                fontWeight: 500,
+                fontSize: "13px",
+                cursor: "pointer",
+                transition: "all 0.2s",
+                boxShadow: loginRole === "admin" ? "0 2px 6px rgba(23, 33, 28, 0.05)" : "none"
+              }}
+            >
+              Admin Login
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginRole("employee");
+                setError(null);
+              }}
+              style={{
+                flex: 1,
+                padding: "8px 16px",
+                border: "none",
+                borderRadius: "8px",
+                background: loginRole === "employee" ? "#ffffff" : "transparent",
+                color: loginRole === "employee" ? "#0f7a5f" : "#66736d",
+                fontWeight: 500,
+                fontSize: "13px",
+                cursor: "pointer",
+                transition: "all 0.2s",
+                boxShadow: loginRole === "employee" ? "0 2px 6px rgba(23, 33, 28, 0.05)" : "none"
+              }}
+            >
+              Employee Login
+            </button>
+          </div>
+
           <div className="input-group">
             <label htmlFor="email">
-              <span>Work Email Address</span>
+              <span>{loginRole === "admin" ? "Admin Email Address" : "Work Email Address"}</span>
               <div className="input-with-icon">
                 <Mail className="field-icon" />
                 <input

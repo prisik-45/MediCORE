@@ -62,7 +62,7 @@ def list_catalog_emails(
     current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
     settings = get_settings()
-    user_uuid = UUID(current_user["id"])
+    user_uuid = UUID(current_user["tenant_id"])
     stmt = (
         select(CatalogEmail, Supplier.name)
         .join(Supplier, Supplier.id == CatalogEmail.supplier_id)
@@ -97,7 +97,7 @@ def list_catalog_items(
     current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
     settings = get_settings()
-    user_uuid = UUID(current_user["id"])
+    user_uuid = UUID(current_user["tenant_id"])
     stmt = (
         select(CatalogItem, Supplier.name, CatalogEmail.received_at)
         .join(Supplier, Supplier.id == CatalogItem.supplier_id)
@@ -143,7 +143,7 @@ def delete_catalog_email(
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a specific catalog email and all its extracted catalog items securely."""
-    user_uuid = UUID(current_user["id"])
+    user_uuid = UUID(current_user["tenant_id"])
     email_record = db.query(CatalogEmail).filter(CatalogEmail.id == email_id, CatalogEmail.tenant_id == user_uuid).first()
     if not email_record:
         from fastapi import HTTPException

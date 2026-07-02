@@ -34,7 +34,7 @@ def list_suppliers(
 ) -> list[dict]:
     settings = get_settings()
     try:
-        user_uuid = UUID(current_user["id"])
+        user_uuid = UUID(current_user["tenant_id"])
         stmt = (
             select(Supplier)
             .join(CatalogEmail, CatalogEmail.supplier_id == Supplier.id)

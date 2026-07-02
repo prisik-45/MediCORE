@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     google_project_id: str = ""
     google_pubsub_topic: str = ""
 
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = Field(default="", repr=False)
+    smtp_sender: str = "medicore.ai@gmail.com"
+
+
 
 @lru_cache
 def get_settings() -> Settings:

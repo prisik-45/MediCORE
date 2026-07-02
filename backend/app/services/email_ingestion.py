@@ -570,6 +570,11 @@ class EmailIngestionService:
             logger.error("EmailAccount %s not found for polling", account_id)
             return 0
 
+        # Resolve active tenant_id from profiles
+        from backend.app.models import Profile
+        profile = self.db.query(Profile).filter(Profile.id == account.user_id).first()
+        active_tenant_id = profile.tenant_id if (profile and profile.tenant_id) else account.user_id
+
         # Decrypt password securely
         try:
             password = decrypt_password(account.encrypted_password)
@@ -681,7 +686,7 @@ class EmailIngestionService:
                 # Fetch already processed email IDs cache to optimize DB lookup
                 processed_email_ids = set()
                 from backend.app.models import CatalogEmail
-                res = self.db.query(CatalogEmail.raw_email_id).filter(CatalogEmail.tenant_id == account.user_id).all()
+                res = self.db.query(CatalogEmail.raw_email_id).filter(CatalogEmail.tenant_id == active_tenant_id).all()
                 for r in res:
                     raw_stored_id = r[0]
                     account_prefix = f"{account.id}:"
@@ -803,7 +808,7 @@ class EmailIngestionService:
 
                     # Process message if we have parse targets and matched everything
                     if parse_targets:
-                        processed += self._process_message(message, raw_email_id=raw_id_str, parse_targets=parse_targets, tenant_id=account.user_id)
+                        processed += self._process_message(message, raw_email_id=raw_id_str, parse_targets=parse_targets, tenant_id=active_tenant_id)
                         if use_uid_commands:
                             client.uid("store", msg_id, "+FLAGS", "\\Seen")
                         else:

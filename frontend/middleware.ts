@@ -28,6 +28,25 @@ function isTokenExpired(token: string): boolean {
   }
 }
 
+// Helper to get JWT Payload fields
+function getJwtPayload(token: string): any {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
@@ -44,8 +63,34 @@ export function middleware(request: NextRequest) {
   const sessionToken = request.cookies.get("sb-access-token")?.value;
   const isAuthenticated = sessionToken && !isTokenExpired(sessionToken);
   
-  const isAuthRoute = pathname === "/login" || pathname === "/register";
+  // Extract custom user role from JWT metadata
+  let userRole: string | undefined;
+  if (isAuthenticated && sessionToken) {
+    const payload = getJwtPayload(sessionToken);
+    userRole = payload?.user_metadata?.role;
+  }
+  
+  const isAuthRoute = 
+    pathname === "/login" || 
+    pathname === "/register" || 
+    pathname.startsWith("/activate") || 
+    pathname.startsWith("/reset-password");
+    
   const isSetupRoute = pathname.startsWith("/register/email-setup") || pathname.startsWith("/register/done");
+  
+  // Route guard: only admin can access admin routes
+  if (pathname.startsWith("/admin")) {
+    if (!isAuthenticated) {
+      const loginUrl = new URL("/login", request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+    if (userRole !== "admin") {
+      // Non-admin user must redirect to login page!
+      const loginUrl = new URL("/login", request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
+  }
   
   if (!isAuthenticated) {
     // Unauthenticated users attempting to access dashboard or setup pages are sent to login
@@ -54,12 +99,20 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
   } else {
-    // Authenticated users attempting to go to login or register (step 1) are sent to dashboard
+    // Redirect admins away from employee dashboard to admin portal
+    if (pathname === "/" && userRole === "admin") {
+      const adminUrl = new URL("/admin", request.url);
+      return NextResponse.redirect(adminUrl);
+    }
+
+    // Authenticated users attempting to go to login or register are sent to their respective dashboard
     if (isAuthRoute) {
-      const dashboardUrl = new URL("/", request.url);
-      return NextResponse.redirect(dashboardUrl);
+      const targetPath = userRole === "admin" ? "/admin" : "/";
+      const redirectUrl = new URL(targetPath, request.url);
+      return NextResponse.redirect(redirectUrl);
     }
   }
   
   return NextResponse.next();
 }
+

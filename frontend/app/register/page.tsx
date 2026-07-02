@@ -1,16 +1,23 @@
 "use client";
 
-import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, User, Briefcase, Loader2, Info, Eye, EyeOff } from "lucide-react";
 
 export default function RegisterStep1Page() {
   const router = useRouter();
-  const [fullName, setFullName] = useState("");
+  const searchParams = useSearchParams();
+  
+  const token = searchParams.get("token");
+  const initialEmail = searchParams.get("email") || "";
+  const initialName = searchParams.get("name") || "";
+  const isEmployee = !!token;
+
+  const [fullName, setFullName] = useState(initialName);
   const [organisation, setOrganisation] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +25,11 @@ export default function RegisterStep1Page() {
   const [signUpSuccess, setSignUpSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  useEffect(() => {
+    if (initialEmail) setEmail(initialEmail);
+    if (initialName) setFullName(initialName);
+  }, [initialEmail, initialName]);
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault();
@@ -37,8 +49,8 @@ export default function RegisterStep1Page() {
         options: {
           data: {
             full_name: fullName.trim(),
-            organisation: organisation.trim(),
-            role: "member",
+            organisation: isEmployee ? "" : organisation.trim(),
+            role: isEmployee ? "employee" : "admin",
           },
         },
       });
@@ -64,8 +76,12 @@ export default function RegisterStep1Page() {
         return;
       }
 
-      // If user is auto-confirmed, proceed to email setup directly.
-      router.push("/register/email-setup");
+      // If user is auto-confirmed, proceed to email setup directly if employee, otherwise go to done.
+      if (isEmployee) {
+        router.push("/register/email-setup");
+      } else {
+        router.push("/register/done");
+      }
       router.refresh();
     } catch (err) {
       setError("An unexpected error occurred. Please try again.");
@@ -145,20 +161,37 @@ export default function RegisterStep1Page() {
               <div className="step-circle">1</div>
               <span>Account</span>
             </div>
-            <div className="step-line"></div>
-            <div className="step">
-              <div className="step-circle">2</div>
-              <span>Email Setup</span>
-            </div>
-            <div className="step-line"></div>
-            <div className="step">
-              <div className="step-circle">3</div>
-              <span>Done</span>
-            </div>
+            {isEmployee ? (
+              <>
+                <div className="step-line"></div>
+                <div className="step">
+                  <div className="step-circle">2</div>
+                  <span>Email Setup</span>
+                </div>
+                <div className="step-line"></div>
+                <div className="step">
+                  <div className="step-circle">3</div>
+                  <span>Done</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="step-line"></div>
+                <div className="step">
+                  <div className="step-circle">2</div>
+                  <span>Done</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="auth-header-text" style={{ textAlign: "center" }}>
-            <h2>Create Your Account</h2>
+            <h2>{isEmployee ? "Employee Registration" : "Create Company Workspace (Admin)"}</h2>
+            <p style={{ fontSize: "13px", color: "#66736d", marginTop: "4px" }}>
+              {isEmployee 
+                ? "Set up your employee credentials to start syncing catalogs" 
+                : "Register your organization to manage employee access"}
+            </p>
           </div>
 
           {error && (
@@ -186,22 +219,24 @@ export default function RegisterStep1Page() {
               </label>
             </div>
 
-            <div className="input-group">
-              <label htmlFor="organisation">
-                <span>Company Name</span>
-                <div className="input-with-icon">
-                  <Briefcase className="field-icon" />
-                  <input
-                    id="organisation"
-                    value={organisation}
-                    onChange={(e) => setOrganisation(e.target.value)}
-                    placeholder="Core Consultancy Ltd"
-                    required
-                    autoComplete="organization"
-                  />
-                </div>
-              </label>
-            </div>
+            {!isEmployee && (
+              <div className="input-group">
+                <label htmlFor="organisation">
+                  <span>Company Name</span>
+                  <div className="input-with-icon">
+                    <Briefcase className="field-icon" />
+                    <input
+                      id="organisation"
+                      value={organisation}
+                      onChange={(e) => setOrganisation(e.target.value)}
+                      placeholder="Core Consultancy Ltd"
+                      required
+                      autoComplete="organization"
+                    />
+                  </div>
+                </label>
+              </div>
+            )}
 
             <div className="input-group">
               <label htmlFor="email">
@@ -214,7 +249,8 @@ export default function RegisterStep1Page() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="sarah@coreconsultancy.com"
-                    required
+                    required={!isEmployee}
+                    disabled={isEmployee}
                     autoComplete="email"
                   />
                 </div>

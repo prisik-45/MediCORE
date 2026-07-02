@@ -831,9 +831,12 @@ export default function Home() {
         const u = session.user;
         const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
         const org = u.user_metadata?.organisation || "MediCORE Central";
-        const userRole = u.user_metadata?.role
+        let userRole = u.user_metadata?.role
           ? (u.user_metadata.role.charAt(0).toUpperCase() + u.user_metadata.role.slice(1))
-          : "Member";
+          : "Employee";
+        if (userRole === "Member") {
+          userRole = "Employee";
+        }
         setAuthUser((prev) => {
           if (
             prev &&
@@ -865,9 +868,12 @@ export default function Home() {
         const u = session.user;
         const name = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
         const org = u.user_metadata?.organisation || "MediCORE Central";
-        const userRole = u.user_metadata?.role
+        let userRole = u.user_metadata?.role
           ? (u.user_metadata.role.charAt(0).toUpperCase() + u.user_metadata.role.slice(1))
-          : "Member";
+          : "Employee";
+        if (userRole === "Member") {
+          userRole = "Employee";
+        }
         setAuthUser((prev) => {
           if (
             prev &&
