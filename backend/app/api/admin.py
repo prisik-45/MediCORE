@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, UTC
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from pydantic import BaseModel, EmailStr
 
-from backend.app.db import get_db, get_supabase
+from backend.app.db import get_db, get_supabase, SessionLocal
 from backend.app.auth import get_current_admin, get_current_user
 from backend.app.models import Profile, Supplier, CatalogItem, CatalogEmail, EmployeeInvitation, PasswordReset, EmailAccount, AIQueryLog
 from backend.app.services.email_sender import send_smtp_email
@@ -99,13 +99,27 @@ def invite_employee(
     admin_uuid = UUID(current_user["id"])
     tenant_uuid = UUID(current_user["tenant_id"])
     
-    # Check if invitation already exists and is pending
+    # Check if invitation already exists
     existing_invite = db.query(EmployeeInvitation).filter(
-        EmployeeInvitation.email == payload.email,
-        EmployeeInvitation.status == "Pending Activation"
+        EmployeeInvitation.email == payload.email
     ).first()
     if existing_invite:
-         raise HTTPException(status_code=400, detail="An invitation is already pending for this email address.")
+        # Check if the user profile exists in the database
+        user_id_val = db.execute(text("SELECT id FROM auth.users WHERE email = :email"), {"email": payload.email}).scalar()
+        profile_exists = False
+        if user_id_val:
+            profile_exists = db.query(Profile).filter(Profile.id == user_id_val).first() is not None
+            
+        if profile_exists:
+            p = db.query(Profile).filter(Profile.id == user_id_val).first()
+            if p.status == "Disabled":
+                raise HTTPException(status_code=400, detail="This account is deactivated. Please delete or reactivate it.")
+            else:
+                raise HTTPException(status_code=400, detail="An employee with this email address is already registered.")
+        else:
+            # The profile was deleted, so we can clean up the old invitation record to prevent UNIQUE constraint violation
+            db.delete(existing_invite)
+            db.commit()
          
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(UTC) + timedelta(hours=2)
@@ -122,13 +136,16 @@ def invite_employee(
     db.add(new_invite)
     db.commit()
     
+    admin_profile = db.query(Profile).filter(Profile.id == admin_uuid).first()
+    org_name = admin_profile.organisation if (admin_profile and admin_profile.organisation) else "MediCORE"
+
     # Send invitation email via background Celery task
     activation_link = f"{settings.frontend_origin}/activate?token={token}"
     email_html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#17211c;max-width:500px;margin:0 auto;padding:24px;border:1px solid #dce4df;border-radius:12px;">
       <h2 style="color:#0f7a5f;margin:0 0 16px 0;">You're invited to join MediCORE</h2>
       <p>Hi {payload.name},</p>
-      <p>You've been invited to use MediCORE by Tarkshy Consultancy Services.</p>
+      <p>You've been invited to use MediCORE by {org_name}.</p>
       <p style="margin:24px 0;">
         <a href="{activation_link}" style="background-color:#0f7a5f;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:600;display:inline-block;">Activate Account</a>
       </p>
@@ -178,7 +195,9 @@ def list_employees(db: Session = Depends(get_db), current_user: dict = Depends(g
             last_sync = "N/A (Admin)"
         elif email_account:
             connected_email = email_account.email_address
-            if email_account.last_synced_at:
+            if email_account.sync_status == "error":
+                last_sync = "Sync error"
+            elif email_account.last_synced_at:
                 # Format relative time
                 diff = datetime.now(UTC) - email_account.last_synced_at.replace(tzinfo=UTC)
                 if diff.days > 0:
@@ -191,8 +210,6 @@ def list_employees(db: Session = Depends(get_db), current_user: dict = Depends(g
                     last_sync = "1 minute ago" if mins == 1 else f"{mins} minutes ago"
                 else:
                     last_sync = "Just now"
-            elif email_account.sync_status == "error":
-                last_sync = "Sync error"
 
         # Skip admin user from listing as employee if they want purely employees list, but let's include all profiles for database overview
         employees_list.append({
@@ -217,9 +234,81 @@ def list_employees(db: Session = Depends(get_db), current_user: dict = Depends(g
         
     return employees_list
 
+def async_remove_employee_cleanup(user_id: UUID):
+    db = SessionLocal()
+    try:
+        db.query(EmailAccount).filter(EmailAccount.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        logger.info(f"Successfully finished background remove-clean-up for employee user_id {user_id}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in async_remove_employee_cleanup task: {e}")
+    finally:
+        db.close()
+
+
+def async_delete_employee_cleanup(user_id: UUID, email_val: str | None):
+    db = SessionLocal()
+    try:
+        from backend.app.models import EmailAccount, PasswordReset, EmailSyncSetting, EmployeeInvitation
+        if email_val:
+            db.query(EmployeeInvitation).filter(EmployeeInvitation.email == email_val).delete(synchronize_session=False)
+        db.query(EmailAccount).filter(EmailAccount.user_id == user_id).delete(synchronize_session=False)
+        db.query(PasswordReset).filter(PasswordReset.user_id == user_id).delete(synchronize_session=False)
+        db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        logger.info(f"Successfully finished background delete-clean-up for employee user_id {user_id}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in async_delete_employee_cleanup task: {e}")
+    finally:
+        db.close()
+
+
 # 6. Disable Employee / Remove Employee
 @router.post("/employees/{user_id}/remove")
-def remove_employee(user_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
+def remove_employee(
+    user_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin)
+):
+    tenant_uuid = UUID(current_user["tenant_id"])
+    profile = db.query(Profile).filter(Profile.id == user_id, Profile.tenant_id == tenant_uuid).first()
+    
+    if not profile:
+        # Check if this ID is a pending invitation
+        invitation = db.query(EmployeeInvitation).filter(
+            EmployeeInvitation.id == user_id,
+            EmployeeInvitation.tenant_id == tenant_uuid
+        ).first()
+        if invitation:
+            db.delete(invitation)
+            db.commit()
+            return {"message": "Pending employee invitation has been cancelled."}
+        raise HTTPException(status_code=404, detail="Employee profile not found")
+        
+    if profile.id == UUID(current_user["id"]):
+        raise HTTPException(status_code=400, detail="You cannot deactivate your own admin account.")
+        
+    # Disable status (fast update)
+    profile.status = "Disabled"
+    db.commit()
+    
+    # Process slow deletes asynchronously to release database locks and avoid API timeouts
+    background_tasks.add_task(async_remove_employee_cleanup, user_id)
+    
+    return {"message": f"Employee {profile.full_name} has been deactivated."}
+
+
+# Permanent Delete Employee
+@router.post("/employees/{user_id}/delete")
+def delete_employee(
+    user_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin)
+):
     tenant_uuid = UUID(current_user["tenant_id"])
     profile = db.query(Profile).filter(Profile.id == user_id, Profile.tenant_id == tenant_uuid).first()
     
@@ -227,16 +316,23 @@ def remove_employee(user_id: UUID, db: Session = Depends(get_db), current_user: 
         raise HTTPException(status_code=404, detail="Employee profile not found")
         
     if profile.id == UUID(current_user["id"]):
-        raise HTTPException(status_code=400, detail="You cannot deactivate your own admin account.")
+        raise HTTPException(status_code=400, detail="You cannot delete your own admin account.")
         
-    # Disable status
-    profile.status = "Disabled"
-    
-    # Terminate and delete their sync email accounts so it stops sync
-    db.query(EmailAccount).filter(EmailAccount.user_id == user_id).delete(synchronize_session=False)
+    # Resolve employee email before deleting profile
+    email_val = None
+    try:
+        email_val = db.execute(text("SELECT email FROM auth.users WHERE id = :id"), {"id": user_id}).scalar()
+    except Exception as e:
+        logger.warning(f"Could not resolve email from auth.users for user_id {user_id}: {e}")
+        
+    # Delete profile synchronously (fast update)
+    db.delete(profile)
     db.commit()
     
-    return {"message": f"Employee {profile.full_name} has been deactivated."}
+    # Run the cascading deletes and invitation clean-ups in background
+    background_tasks.add_task(async_delete_employee_cleanup, user_id, email_val)
+    
+    return {"message": f"Employee has been permanently deleted."}
 
 # 7. Reset Password Trigger
 @router.post("/employees/{user_id}/reset-password")

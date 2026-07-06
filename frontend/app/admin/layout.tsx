@@ -3,15 +3,35 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Users, Database, LogOut, Loader2, Menu, X } from "lucide-react";
+import { LayoutDashboard, Users, Database, LogOut, Menu, X, Settings } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import Loader from "@/components/Loader";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [adminName, setAdminName] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentPathname, setCurrentPathname] = useState("/admin");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCurrentPathname(window.location.pathname);
+      
+      const handlePopState = () => {
+        setCurrentPathname(window.location.pathname);
+      };
+      window.addEventListener("popstate", handlePopState);
+      return () => window.removeEventListener("popstate", handlePopState);
+    }
+  }, []);
+
+  const handleNavigate = (path: string) => {
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", path);
+      window.dispatchEvent(new Event("popstate"));
+    }
+  };
 
   useEffect(() => {
     // Verify session and role on layout mount
@@ -52,20 +72,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   if (loading) {
-    return (
-      <div className="auth-page">
-        <div className="auth-card-wrapper" style={{ maxWidth: "420px" }}>
-          <div className="auth-card-glow"></div>
-          <div className="auth-card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "220px", textAlign: "center" }}>
-            <Loader2 className="animate-spin" size={40} style={{ color: "#0f7a5f", marginBottom: "20px" }} />
-            <h2 style={{ fontSize: "18px", fontWeight: 700, color: "#17211c", margin: "0 0 8px 0" }}>Verifying Admin Session</h2>
-            <p style={{ fontSize: "13px", color: "#66736d", margin: 0, lineHeight: 1.5 }}>
-              Loading dashboard metrics...
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <Loader variant="card" title="Verifying Admin Session" subtitle="Loading dashboard metrics..." />;
   }
 
   return (
@@ -108,39 +115,51 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="sidebar-section">
             <ul className="sidebar-nav">
               <li className="sidebar-nav-item">
-                <Link 
-                  href="/admin" 
-                  className={`sidebar-nav-link ${pathname === "/admin" ? "active" : ""}`}
-                  style={{ textDecoration: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit" }}
+                <button
+                  onClick={() => handleNavigate("/admin")}
+                  className={`sidebar-nav-link ${currentPathname === "/admin" ? "active" : ""}`}
                 >
                   <LayoutDashboard size={18} />
                   <span>Dashboard</span>
-                </Link>
+                </button>
               </li>
               <li className="sidebar-nav-item">
-                <Link 
-                  href="/admin/employees" 
-                  className={`sidebar-nav-link ${pathname === "/admin/employees" ? "active" : ""}`}
-                  style={{ textDecoration: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit" }}
+                <button
+                  onClick={() => handleNavigate("/admin/employees")}
+                  className={`sidebar-nav-link ${currentPathname === "/admin/employees" ? "active" : ""}`}
                 >
                   <Users size={18} />
                   <span>Employees</span>
-                </Link>
+                </button>
               </li>
               <li className="sidebar-nav-item">
-                <Link 
-                  href="/admin/database" 
-                  className={`sidebar-nav-link ${pathname === "/admin/database" ? "active" : ""}`}
-                  style={{ textDecoration: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit" }}
+                <button
+                  onClick={() => handleNavigate("/admin/database")}
+                  className={`sidebar-nav-link ${currentPathname === "/admin/database" ? "active" : ""}`}
                 >
                   <Database size={18} />
                   <span>Database</span>
-                </Link>
+                </button>
               </li>
             </ul>
           </div>
 
-          <div className="sidebar-footer" style={{ marginTop: "auto" }}>
+          <div className="sidebar-settings-section" style={{ marginTop: "auto" }}>
+            <div className="sidebar-section-title">Settings</div>
+            <ul className="sidebar-nav">
+              <li className="sidebar-nav-item">
+                <button
+                  onClick={() => handleNavigate("/admin/settings")}
+                  className={`sidebar-nav-link ${currentPathname === "/admin/settings" ? "active" : ""}`}
+                >
+                  <Settings size={18} />
+                  <span>Settings</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div className="sidebar-footer">
             <button type="button" onClick={handleLogout}>
               <LogOut size={16} />
               <span>Logout</span>

@@ -39,40 +39,29 @@ export default function RegisterDonePage() {
             </div>
             <h1>MediCORE</h1>
             <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
-              AI-Powered Automated Procurement System<br />
               <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
             </p>
           </div>
 
           {/* Step indicator */}
-          <div className="step-indicator">
-            <div className="step completed">
-              <div className="step-circle">1</div>
-              <span>Account</span>
+          {!isAdmin && (
+            <div className="step-indicator">
+              <div className="step completed">
+                <div className="step-circle">1</div>
+                <span>Account</span>
+              </div>
+              <div className="step-line completed"></div>
+              <div className="step completed">
+                <div className="step-circle">2</div>
+                <span>Email Setup</span>
+              </div>
+              <div className="step-line completed"></div>
+              <div className="step active">
+                <div className="step-circle">3</div>
+                <span>Done</span>
+              </div>
             </div>
-            {!isAdmin ? (
-              <>
-                <div className="step-line completed"></div>
-                <div className="step completed">
-                  <div className="step-circle">2</div>
-                  <span>Email Setup</span>
-                </div>
-                <div className="step-line completed"></div>
-                <div className="step active">
-                  <div className="step-circle">3</div>
-                  <span>Done</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="step-line completed"></div>
-                <div className="step active">
-                  <div className="step-circle">2</div>
-                  <span>Done</span>
-                </div>
-              </>
-            )}
-          </div>
+          )}
 
           <div className="success-content">
             <div className="success-badge">
@@ -173,7 +162,7 @@ export default function RegisterDonePage() {
         .auth-brand h1 {
           margin: 0;
           font-size: 26px;
-          font-weight: 800;
+          font-weight: 500;
           color: #0f7a5f;
           letter-spacing: -0.5px;
         }
@@ -182,7 +171,7 @@ export default function RegisterDonePage() {
           margin: 4px 0 0;
           font-size: 12px;
           color: #66736d;
-          font-weight: 500;
+          font-weight: 400;
           letter-spacing: 0.5px;
           text-transform: uppercase;
         }
@@ -212,7 +201,7 @@ export default function RegisterDonePage() {
           background: #ffffff;
           color: #66736d;
           font-size: 14px;
-          font-weight: 700;
+          font-weight: 500;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -221,7 +210,7 @@ export default function RegisterDonePage() {
 
         .step span {
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 500;
           color: #66736d;
           text-align: center;
         }
@@ -235,7 +224,7 @@ export default function RegisterDonePage() {
 
         .step.active span {
           color: #0f7a5f;
-          font-weight: 700;
+          font-weight: 500;
         }
 
         .step.completed .step-circle {
@@ -269,14 +258,15 @@ export default function RegisterDonePage() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 64px;
-          height: 64px;
+          width: 72px;
+          height: 72px;
           border-radius: 50%;
-          background: #ecfdf5;
-          border: 2px solid #a7f3d0;
-          color: #10b981;
-          margin-bottom: 20px;
-          animation: scaleIn 0.5s ease-out;
+          background: linear-gradient(135deg, rgba(16, 185, 129, 0.06) 0%, rgba(15, 122, 95, 0.12) 100%);
+          border: 1px solid rgba(15, 122, 95, 0.2);
+          color: #0f7a5f;
+          margin-bottom: 24px;
+          box-shadow: 0 8px 24px rgba(15, 122, 95, 0.05), 0 0 0 8px rgba(15, 122, 95, 0.03);
+          animation: scaleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
 
         .check-icon {
@@ -286,28 +276,33 @@ export default function RegisterDonePage() {
 
         .success-content h2 {
           margin: 0;
-          font-size: 24px;
-          font-weight: 800;
-          color: #17211c;
+          font-size: 26px;
+          font-weight: 500;
+          background: linear-gradient(135deg, #092f28 0%, #0f7a5f 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          letter-spacing: -0.5px;
         }
 
         .success-lead-text {
           margin: 8px 0 0;
-          font-size: 15px;
+          font-size: 14px;
           color: #66736d;
           font-weight: 500;
         }
 
         .success-details-card {
-          margin-top: 20px;
-          background: #fafcfb;
-          border: 1px dashed #dce4df;
-          border-radius: 12px;
-          padding: 18px;
+          margin-top: 24px;
+          background: linear-gradient(180deg, #fafcfb 0%, #f4f7f5 100%);
+          border: 1px solid rgba(15, 122, 95, 0.1);
+          border-left: 4px solid #0f7a5f;
+          border-radius: 14px;
+          padding: 20px 24px;
           font-size: 13px;
           line-height: 1.6;
-          color: #66736d;
+          color: #4a5751;
           text-align: left;
+          box-shadow: 0 4px 16px rgba(15, 122, 95, 0.01);
         }
 
         .success-details-card p {
@@ -316,24 +311,26 @@ export default function RegisterDonePage() {
 
         .auth-submit-btn {
           width: 100%;
-          height: 48px;
+          height: 50px;
           background: #0f7a5f;
           color: #ffffff;
           border: none;
-          border-radius: 10px;
+          border-radius: 12px;
           font-size: 15px;
-          font-weight: 600;
+          font-weight: 500;
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 8px;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: all 0.25s ease;
+          box-shadow: 0 4px 14px rgba(15, 122, 95, 0.15);
         }
 
         .auth-submit-btn:hover {
           background: #0d6a50;
-          box-shadow: 0 4px 12px rgba(15, 122, 95, 0.2);
+          transform: translateY(-1px);
+          box-shadow: 0 6px 20px rgba(15, 122, 95, 0.25);
         }
 
         @keyframes scaleIn {

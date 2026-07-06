@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func, Integer, Boolean
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -25,12 +25,13 @@ class Supplier(Base):
 
 class CatalogEmail(Base):
     __tablename__ = "catalog_emails"
+    __table_args__ = (UniqueConstraint("tenant_id", "raw_email_id", name="uq_catalog_emails_tenant_raw_email_id"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     supplier_id: Mapped[UUID] = mapped_column(ForeignKey("suppliers.id"))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    raw_email_id: Mapped[str] = mapped_column(String(255), unique=True)
+    raw_email_id: Mapped[str] = mapped_column(Text)
     subject: Mapped[str | None] = mapped_column(Text)
     pdf_url: Mapped[str | None] = mapped_column(Text)
     processing_status: Mapped[str] = mapped_column(String(50), default="queued")
@@ -110,7 +111,7 @@ class EmailSyncSetting(Base):
     poll_interval_minutes: Mapped[int] = mapped_column(Integer, default=3)
     auto_extract_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_on_new_catalog: Mapped[bool] = mapped_column(Boolean, default=True)
-    ingestion_approach: Mapped[str] = mapped_column(Text, default="approach_2")
+    ingestion_approach: Mapped[str] = mapped_column(Text, default="approach_1")
     trusted_suppliers: Mapped[str] = mapped_column(Text, default="")
     keyword_filters: Mapped[str] = mapped_column(Text, default="catalog, catalogue, price, offer, quote")
     pending_approvals: Mapped[str] = mapped_column(Text, default="")

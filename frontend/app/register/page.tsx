@@ -101,7 +101,6 @@ export default function RegisterStep1Page() {
               </div>
               <h1>MediCORE</h1>
               <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
-                AI-Powered Automated Procurement System<br />
                 <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
               </p>
             </div>
@@ -120,14 +119,17 @@ export default function RegisterStep1Page() {
               <Mail size={32} />
             </div>
 
-            <h2 style={{ fontSize: "22px", fontWeight: 700, color: "#17211c", margin: "0 0 10px 0" }}>Verify Your Email</h2>
+            <h2 style={{ fontSize: "22px", fontWeight: 500, color: "#17211c", margin: "0 0 10px 0" }}>Verify Your Email</h2>
             <p style={{ fontSize: "14px", color: "#66736d", lineHeight: 1.6, margin: "0 0 24px 0" }}>
-              We have sent a verification link to <strong style={{ color: "#17211c" }}>{email}</strong>.<br />
-              Please click the link in the email to confirm your account and proceed to **Step 2: Email Setup**.
+              We have sent a verification link to <span style={{ color: "#17211c", fontWeight: 500 }}>{email}</span>.<br />
+              {isEmployee 
+                ? "Please click the link in the email to confirm your account and proceed to Email Setup." 
+                : "Please click the link in the email to confirm your account and log in."
+              }
             </p>
 
             <div style={{ padding: "16px", background: "#f4f7f5", borderRadius: "10px", fontSize: "12px", color: "#66736d", textAlign: "left", lineHeight: 1.5, marginBottom: "24px" }}>
-              <strong>Tip:</strong> If you don't see the email within a few minutes, please check your Spam or Junk folder.
+              <span style={{ fontWeight: 500 }}>Tip:</span> If you don't see the email within a few minutes, please check your Spam or Junk folder.
             </div>
 
             <Link href="/login" className="auth-submit-btn" style={{ textDecoration: "none" }}>
@@ -150,40 +152,29 @@ export default function RegisterStep1Page() {
             </div>
             <h1>MediCORE</h1>
             <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
-              AI-Powered Automated Procurement System<br />
               <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
             </p>
           </div>
 
           {/* Step indicator */}
-          <div className="step-indicator">
-            <div className="step active">
-              <div className="step-circle">1</div>
-              <span>Account</span>
+          {isEmployee && (
+            <div className="step-indicator">
+              <div className="step active">
+                <div className="step-circle">1</div>
+                <span>Account</span>
+              </div>
+              <div className="step-line"></div>
+              <div className="step">
+                <div className="step-circle">2</div>
+                <span>Email Setup</span>
+              </div>
+              <div className="step-line"></div>
+              <div className="step">
+                <div className="step-circle">3</div>
+                <span>Done</span>
+              </div>
             </div>
-            {isEmployee ? (
-              <>
-                <div className="step-line"></div>
-                <div className="step">
-                  <div className="step-circle">2</div>
-                  <span>Email Setup</span>
-                </div>
-                <div className="step-line"></div>
-                <div className="step">
-                  <div className="step-circle">3</div>
-                  <span>Done</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="step-line"></div>
-                <div className="step">
-                  <div className="step-circle">2</div>
-                  <span>Done</span>
-                </div>
-              </>
-            )}
-          </div>
+          )}
 
           <div className="auth-header-text" style={{ textAlign: "center" }}>
             <h2>{isEmployee ? "Employee Registration" : "Create Company Workspace (Admin)"}</h2>
@@ -325,7 +316,7 @@ export default function RegisterStep1Page() {
                 </>
               ) : (
                 <>
-                  Continue to Email Setup
+                  {isEmployee ? "Continue to Email Setup" : "Create Account"}
                   <ArrowRight size={16} />
                 </>
               )}
@@ -402,7 +393,7 @@ export default function RegisterStep1Page() {
         .auth-brand h1 {
           margin: 0;
           font-size: 26px;
-          font-weight: 800;
+          font-weight: 500;
           color: #0f7a5f;
           letter-spacing: -0.5px;
         }
@@ -411,7 +402,7 @@ export default function RegisterStep1Page() {
           margin: 4px 0 0;
           font-size: 12px;
           color: #66736d;
-          font-weight: 500;
+          font-weight: 400;
           letter-spacing: 0.5px;
           text-transform: uppercase;
         }
@@ -441,7 +432,7 @@ export default function RegisterStep1Page() {
           background: #ffffff;
           color: #66736d;
           font-size: 14px;
-          font-weight: 700;
+          font-weight: 500;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -450,7 +441,7 @@ export default function RegisterStep1Page() {
 
         .step span {
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 500;
           color: #66736d;
           text-align: center;
         }
@@ -464,7 +455,7 @@ export default function RegisterStep1Page() {
 
         .step.active span {
           color: #0f7a5f;
-          font-weight: 700;
+          font-weight: 500;
         }
 
         .step.completed .step-circle {
@@ -495,7 +486,7 @@ export default function RegisterStep1Page() {
         .auth-header-text h2 {
           margin: 0;
           font-size: 20px;
-          font-weight: 700;
+          font-weight: 500;
           color: #17211c;
         }
 
@@ -533,7 +524,7 @@ export default function RegisterStep1Page() {
         .input-group label span {
           display: block;
           font-size: 13px;
-          font-weight: 600;
+          font-weight: 400;
           color: #17211c;
           margin-bottom: 8px;
         }
@@ -624,7 +615,7 @@ export default function RegisterStep1Page() {
           border: none;
           border-radius: 10px;
           font-size: 15px;
-          font-weight: 600;
+          font-weight: 500;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -654,7 +645,7 @@ export default function RegisterStep1Page() {
 
         .auth-link {
           color: #0f7a5f;
-          font-weight: 600;
+          font-weight: 500;
           text-decoration: none;
           transition: color 0.2s;
         }

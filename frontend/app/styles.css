@@ -27,6 +27,13 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
+/* Prevent main window scrolling when dashboard is active */
+html:has(.app-shell),
+body:has(.app-shell) {
+  overflow: hidden !important;
+  height: 100vh !important;
+}
+
 button,
 input,
 select,
@@ -147,6 +154,7 @@ body.sidebar-collapsed .sidebar-footer button {
   display: flex;
   flex-direction: column;
   height: calc(100vh - var(--navbar-height));
+  overflow-y: auto;
 }
 
 .sidebar-top {
@@ -302,11 +310,12 @@ body.sidebar-collapsed .sidebar-toggle {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   margin-top: var(--navbar-height);
   margin-left: var(--sidebar-width);
   margin-right: 0;
   transition: margin 0.3s ease;
+  overflow: hidden;
 }
 
 .app-shell.has-chat {
@@ -329,7 +338,18 @@ body.sidebar-collapsed .app-shell {
 
 .dashboard {
   padding: 32px;
-  min-height: calc(100vh - var(--navbar-height));
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* If a specific scrollable page is active, lock dashboard scrolling */
+.dashboard:has(.inbox-layout),
+.dashboard:has(.supplier-window),
+.dashboard:has(.catalog-window),
+.dashboard:has(.compare-window) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .section-kicker {
@@ -343,7 +363,7 @@ body.sidebar-collapsed .app-shell {
 .inbox-layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
-  min-height: calc(100vh - var(--navbar-height) - 64px);
+  height: 100%;
   border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
@@ -355,6 +375,8 @@ body.sidebar-collapsed .app-shell {
   background: #fafcfb;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
 .inbox-detail-panel {
@@ -362,6 +384,8 @@ body.sidebar-collapsed .app-shell {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .inbox-panel-header {
@@ -400,7 +424,9 @@ body.sidebar-collapsed .app-shell {
 .inbox-list {
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .inbox-thread {
@@ -467,6 +493,11 @@ body.sidebar-collapsed .app-shell {
 }
 
 .thread-status.review {
+  color: #b03a2e;
+  background: rgba(220, 108, 92, 0.12);
+}
+
+.thread-status.failed {
   color: #b03a2e;
   background: rgba(220, 108, 92, 0.12);
 }
@@ -1107,6 +1138,8 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .compare-toolbar {
@@ -1405,6 +1438,8 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  overflow: hidden;
 }
 
 .supplier-toolbar,
@@ -1490,7 +1525,8 @@ tbody tr:hover {
 
 .supplier-table-panel,
 .catalog-table-wrap {
-  overflow: hidden;
+  flex: 1;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
@@ -2127,3 +2163,84 @@ tbody tr:hover {
     to { opacity: 1; transform: translateY(0); }
   }
 }
+
+/* Reusable Modern Loader Component */
+.modern-loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  animation: loader-fade-in-scale 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes loader-fade-in-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modern-spinner {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 18px;
+}
+
+.modern-spinner-ring {
+  box-sizing: border-box;
+  display: block;
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border: 3px solid rgba(15, 122, 95, 0.1);
+  border-radius: 50%;
+}
+
+.modern-spinner-arc {
+  box-sizing: border-box;
+  display: block;
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border: 3px solid transparent;
+  border-top-color: #0f7a5f;
+  border-radius: 50%;
+  animation: modern-spin 0.8s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+}
+
+
+.modern-loader-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: #17211c;
+  margin: 0 0 8px 0;
+  letter-spacing: -0.2px;
+}
+
+.modern-loader-subtitle {
+  font-size: 13px;
+  color: #66736d;
+  margin: 0;
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+.modern-loader-fullscreen {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  background: var(--soft);
+}
+
+@keyframes modern-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

@@ -29,12 +29,12 @@ export default function EmailSetupPage() {
   const [appPassword, setAppPassword] = useState("");
   const [showAppPassword, setShowAppPassword] = useState(false);
   
-  // Filters state
-  const [showFilters, setShowFilters] = useState(false);
-  const [requireAttachment, setRequireAttachment] = useState(true);
-  const [senderKeywords, setSenderKeywords] = useState("");
-  const [subjectKeywords, setSubjectKeywords] = useState("catalog, catalogue, price, offer, quote");
-  const [skipPromotionsTab, setSkipPromotionsTab] = useState(true);
+  // Filters state (Skip Promotions is always ON, Require Attachments is not mandatory)
+  const [requireAttachment] = useState(false);
+  const [senderKeywords] = useState("");
+  const [subjectKeywords] = useState("");
+  const [skipPromotionsTab] = useState(true);
+  const [ingestionApproach, setIngestionApproach] = useState("approach_1");
 
   // Status and loading states
   const [testing, setTesting] = useState(false);
@@ -183,6 +183,7 @@ export default function EmailSetupPage() {
             subject_keywords: subjectKeywords ? subjectKeywords.trim() : null,
             skip_promotions_tab: skipPromotionsTab,
           },
+          ingestion_approach: ingestionApproach,
         }),
       });
 
@@ -210,7 +211,6 @@ export default function EmailSetupPage() {
             </div>
             <h1>MediCORE</h1>
             <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
-              AI-Powered Automated Procurement System<br />
               <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
             </p>
           </div>
@@ -323,79 +323,93 @@ export default function EmailSetupPage() {
               </div>
             </details>
 
-            {/* Collapsible Filters Section */}
-            <div className="collapsible-section">
-              <button
-                type="button"
-                className="collapsible-trigger"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <div className="trigger-label">
-                  <Sliders className="trigger-icon" size={16} />
-                  <span>Email Filters</span>
-                </div>
-                {showFilters ? <ChevronUp size={16} className="trigger-chevron" /> : <ChevronDown size={16} className="trigger-chevron" />}
-              </button>
-
-              {showFilters && (
-                <div className="collapsible-content">
-                  <div className="filter-toggle-row">
-                    <label className="toggle-label" htmlFor="requireAttachment">
-                      <strong>Require Attachments</strong>
-                      <span>Only parse emails containing PDF supplier documents</span>
-                    </label>
-                    <input
-                      id="requireAttachment"
-                      type="checkbox"
-                      className="ios-switch"
-                      checked={requireAttachment}
-                      onChange={(e) => setRequireAttachment(e.target.checked)}
-                    />
-                  </div>
-
-                  <div className="filter-toggle-row">
-                    <label className="toggle-label" htmlFor="skipPromotions">
-                      <strong>Skip Promotions</strong>
-                      <span>Ignore emails flagged as newsletters or promotions</span>
-                    </label>
-                    <input
-                      id="skipPromotions"
-                      type="checkbox"
-                      className="ios-switch"
-                      checked={skipPromotionsTab}
-                      onChange={(e) => setSkipPromotionsTab(e.target.checked)}
-                    />
-                  </div>
-
-                  <div className="input-group">
-                    <label htmlFor="subjectKeywords" className="input-label-row">
-                      <span>Subject Keywords</span>
-                    </label>
-                    <div className="input-simple">
-                      <input
-                        id="subjectKeywords"
-                        value={subjectKeywords}
-                        onChange={(e) => setSubjectKeywords(e.target.value)}
-                        placeholder="catalog, catalogue, price list"
-                      />
+            {/* Email Ingestion Mode Option */}
+            <div className="input-group" style={{ marginBottom: "0px" }}>
+              <label className="input-label-row">
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#17211c" }}>Email Ingestion Mode</span>
+              </label>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "12px",
+                marginTop: "6px"
+              }}>
+                {/* Option 1: Gmail Label */}
+                <div
+                  onClick={() => setIngestionApproach("approach_1")}
+                  style={{
+                    border: `1px solid ${ingestionApproach === "approach_1" ? "var(--accent)" : "#dce4df"}`,
+                    background: ingestionApproach === "approach_1" ? "rgba(15, 122, 95, 0.03)" : "#ffffff",
+                    borderRadius: "12px",
+                    padding: "12px 14px",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    boxShadow: ingestionApproach === "approach_1" ? "0 4px 12px rgba(15, 122, 95, 0.06)" : "none"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <div style={{
+                      width: "14px",
+                      height: "14px",
+                      borderRadius: "50%",
+                      border: `1.5px solid ${ingestionApproach === "approach_1" ? "var(--accent)" : "#a2b0a9"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0
+                    }}>
+                      {ingestionApproach === "approach_1" && (
+                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--accent)" }} />
+                      )}
                     </div>
+                    <strong style={{ fontSize: "12px", color: ingestionApproach === "approach_1" ? "var(--accent)" : "var(--ink)", fontWeight: 600, lineHeight: 1.2 }}>Gmail Label Ingestion</strong>
                   </div>
-
-                  <div className="input-group">
-                    <label htmlFor="senderKeywords" className="input-label-row">
-                      <span>Sender Keywords</span>
-                    </label>
-                    <div className="input-simple">
-                      <input
-                        id="senderKeywords"
-                        value={senderKeywords}
-                        onChange={(e) => setSenderKeywords(e.target.value)}
-                        placeholder="supplier, pharma, chemical"
-                      />
-                    </div>
-                  </div>
+                  <span style={{ fontSize: "10.5px", color: "#66736d", lineHeight: 1.35 }}>
+                    Ingest only emails marked with the 'suppliers' label in Gmail. Safe & highly recommended.
+                  </span>
                 </div>
-              )}
+
+                {/* Option 2: Trusted Supplier Approval */}
+                <div
+                  onClick={() => setIngestionApproach("approach_2")}
+                  style={{
+                    border: `1px solid ${ingestionApproach === "approach_2" ? "var(--accent)" : "#dce4df"}`,
+                    background: ingestionApproach === "approach_2" ? "rgba(15, 122, 95, 0.03)" : "#ffffff",
+                    borderRadius: "12px",
+                    padding: "12px 14px",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    boxShadow: ingestionApproach === "approach_2" ? "0 4px 12px rgba(15, 122, 95, 0.06)" : "none"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <div style={{
+                      width: "14px",
+                      height: "14px",
+                      borderRadius: "50%",
+                      border: `1.5px solid ${ingestionApproach === "approach_2" ? "var(--accent)" : "#a2b0a9"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0
+                    }}>
+                      {ingestionApproach === "approach_2" && (
+                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--accent)" }} />
+                      )}
+                    </div>
+                    <strong style={{ fontSize: "12px", color: ingestionApproach === "approach_2" ? "var(--accent)" : "var(--ink)", fontWeight: 600, lineHeight: 1.2 }}>Trusted Supplier Approval</strong>
+                  </div>
+                  <span style={{ fontSize: "10.5px", color: "#66736d", lineHeight: 1.35 }}>
+                    Ingests catalogs automatically from trusted senders, while holding new suppliers for approval.
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Test Connection Display */}
@@ -406,15 +420,21 @@ export default function EmailSetupPage() {
                     <CheckCircle2 className="feedback-icon" size={18} />
                     <div className="feedback-text">
                       <strong>Connection Succeeded</strong>
-                      <p>{testResult.message}</p>
                     </div>
                   </>
                 ) : (
                   <>
                     <XCircle className="feedback-icon" size={18} />
                     <div className="feedback-text">
-                      <strong>Connection Failed</strong>
-                      <p>{testResult.message}</p>
+                      {testResult.message.toLowerCase().includes("authentication failed") ||
+                      testResult.message.toLowerCase().includes("login error") ? (
+                        <strong>Connection Failed : Invalid Credentials</strong>
+                      ) : (
+                        <>
+                          <strong>Connection Failed</strong>
+                          <p>{testResult.message}</p>
+                        </>
+                      )}
                     </div>
                   </>
                 )}
@@ -517,7 +537,7 @@ export default function EmailSetupPage() {
         .auth-brand h1 {
           margin: 0;
           font-size: 24px;
-          font-weight: 800;
+          font-weight: 500;
           color: #0f7a5f;
           letter-spacing: -0.5px;
         }
@@ -526,7 +546,7 @@ export default function EmailSetupPage() {
           margin: 4px 0 0;
           font-size: 11px;
           color: #66736d;
-          font-weight: 500;
+          font-weight: 400;
           letter-spacing: 0.5px;
           text-transform: uppercase;
         }
@@ -556,7 +576,7 @@ export default function EmailSetupPage() {
           background: #ffffff;
           color: #66736d;
           font-size: 13px;
-          font-weight: 700;
+          font-weight: 500;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -565,7 +585,7 @@ export default function EmailSetupPage() {
 
         .step span {
           font-size: 10px;
-          font-weight: 600;
+          font-weight: 500;
           color: #66736d;
           text-align: center;
         }
@@ -579,7 +599,7 @@ export default function EmailSetupPage() {
 
         .step.active span {
           color: #0f7a5f;
-          font-weight: 700;
+          font-weight: 500;
         }
 
         .step.completed .step-circle {
@@ -606,7 +626,7 @@ export default function EmailSetupPage() {
         .auth-header-text h2 {
           margin: 0;
           font-size: 18px;
-          font-weight: 700;
+          font-weight: 500;
           color: #17211c;
         }
 
@@ -789,7 +809,7 @@ export default function EmailSetupPage() {
 
         .input-label-row {
           font-size: 13px;
-          font-weight: 600;
+          font-weight: 500;
           color: #17211c;
         }
 
@@ -919,7 +939,7 @@ export default function EmailSetupPage() {
           align-items: center !important;
           gap: 10px !important;
           font-size: 13px !important;
-          font-weight: 600 !important;
+          font-weight: 500 !important;
           color: #17211c !important;
         }
 
@@ -963,7 +983,7 @@ export default function EmailSetupPage() {
         .toggle-label strong {
           font-size: 13px;
           color: #17211c;
-          font-weight: 600;
+          font-weight: 500;
         }
 
         .toggle-label span {
@@ -1055,7 +1075,7 @@ export default function EmailSetupPage() {
         }
 
         .feedback-text strong {
-          font-weight: 700;
+          font-weight: 500;
           font-size: 13px;
         }
 
@@ -1079,7 +1099,7 @@ export default function EmailSetupPage() {
           color: #0f7a5f !important;
           border-radius: 12px !important;
           font-size: 14px !important;
-          font-weight: 600 !important;
+          font-weight: 500 !important;
           cursor: pointer !important;
           transition: all 0.2s ease !important;
           display: flex !important;
@@ -1099,7 +1119,7 @@ export default function EmailSetupPage() {
           border: none !important;
           border-radius: 12px !important;
           font-size: 14px !important;
-          font-weight: 600 !important;
+          font-weight: 500 !important;
           cursor: pointer !important;
           transition: all 0.2s ease !important;
           display: flex !important;

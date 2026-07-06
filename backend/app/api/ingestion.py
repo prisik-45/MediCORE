@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import get_db
 from backend.app.services.email_ingestion import EmailIngestionService
 from backend.app.tasks import poll_inbox
+from backend.app.auth import get_current_user
 
 router = APIRouter()
 
@@ -39,6 +40,27 @@ def poll_now() -> dict[str, str]:
 def poll_now_sync(db: Session = Depends(get_db)) -> dict[str, int]:
     processed = EmailIngestionService(db).poll_imap_inbox()
     return {"processed": processed}
+
+
+@router.post("/poll-now-sync-user")
+def poll_now_sync_user(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+) -> dict[str, int]:
+    from uuid import UUID
+    from backend.app.models import EmailAccount
+    user_uuid = UUID(current_user["id"])
+    accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
+    
+    total_processed = 0
+    service = EmailIngestionService(db)
+    for account in accounts:
+        try:
+            total_processed += service.poll_account_inbox(account.id, force_retry_failed=True)
+        except Exception:
+            pass
+            
+    return {"processed": total_processed}
 
 
 @router.post("/poll-now-sync-with-credentials")

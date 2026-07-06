@@ -48,6 +48,42 @@ export default function LoginPage() {
         return;
       }
 
+      // Verify database status of profile (active/disabled/deleted)
+      try {
+        const isLocal = window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1" ||
+          window.location.hostname === "0.0.0.0" ||
+          window.location.hostname.startsWith("192.168.") ||
+          window.location.hostname.startsWith("10.") ||
+          window.location.hostname.startsWith("172.") ||
+          window.location.hostname.endsWith(".local");
+
+        const targetHost = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+        const apiBaseUrl = isLocal ? `${window.location.protocol}//${targetHost}:8000` : "https://backend-production-b29e.up.railway.app";
+
+        const res = await fetch(`${apiBaseUrl}/api/profile`, {
+          headers: {
+            Authorization: `Bearer ${data.session?.access_token}`
+          }
+        });
+        if (!res.ok) {
+          await supabase.auth.signOut();
+          setError("You are not authorised to use MediCORE");
+          setLoading(false);
+          return;
+        } else {
+          const profileData = await res.json();
+          if (profileData.status === "Disabled") {
+            await supabase.auth.signOut();
+            setError("You are not authorised to use MediCORE");
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to verify user profile during login:", err);
+      }
+
       if (role === "admin") {
         router.push("/admin");
       } else {
@@ -71,7 +107,6 @@ export default function LoginPage() {
             </div>
             <h1>MediCORE</h1>
             <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
-              AI-Powered Automated Procurement System<br />
               <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
             </p>
           </div>

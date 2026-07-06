@@ -2,7 +2,8 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ShieldCheck } from "lucide-react";
+import Loader from "@/components/Loader";
 
 function ActivateContent() {
   const router = useRouter();
@@ -50,11 +51,7 @@ function ActivateContent() {
         <div className="auth-card-glow"></div>
         <div className="auth-card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "200px" }}>
           {loading ? (
-            <div style={{ textAlign: "center" }}>
-              <Loader2 className="animate-spin" style={{ color: "#0f7a5f", margin: "0 auto 16px auto", width: "40px", height: "40px" }} />
-              <h2 style={{ fontSize: "18px", fontWeight: 700, color: "#17211c" }}>Verifying Invitation...</h2>
-              <p style={{ fontSize: "14px", color: "#66736d", marginTop: "4px" }}>Please wait while we validate your token.</p>
-            </div>
+            <Loader variant="inline" title="Verifying Invitation..." subtitle="Please wait while we validate your token." />
           ) : (
             <div style={{ textAlign: "center", width: "100%" }}>
               <div style={{
@@ -71,12 +68,12 @@ function ActivateContent() {
                 <AlertTriangle size={28} />
               </div>
               <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#17211c", margin: "0 0 8px 0" }}>Activation Failed</h2>
-              <div className="auth-error-box" style={{ margin: "16px 0", textAlign: "left" }}>
-                <ShieldCheck className="error-icon" />
+              <div className="auth-error-box" style={{ margin: "16px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                <ShieldCheck className="error-icon" style={{ flexShrink: 0 }} />
                 <span>{error}</span>
               </div>
               <p style={{ fontSize: "13px", color: "#66736d", lineHeight: 1.6 }}>
-                If you believe this is an error, please ask your administrator to send you a new invitation link.
+                Please ask your administrator to send you a new invitation link.
               </p>
             </div>
           )}
@@ -88,15 +85,7 @@ function ActivateContent() {
 
 export default function ActivatePage() {
   return (
-    <Suspense fallback={
-      <main className="auth-page">
-        <div className="auth-card-wrapper">
-          <div className="auth-card" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "200px" }}>
-            <Loader2 className="animate-spin" style={{ color: "#0f7a5f" }} />
-          </div>
-        </div>
-      </main>
-    }>
+    <Suspense fallback={<Loader variant="card" />}>
       <ActivateContent />
     </Suspense>
   );

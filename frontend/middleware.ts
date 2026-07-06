@@ -85,9 +85,21 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
     if (userRole !== "admin") {
-      // Non-admin user must redirect to login page!
       const loginUrl = new URL("/login", request.url);
       return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
+  }
+
+  // Route guard: only employees can access employee routes
+  if (pathname.startsWith("/employee")) {
+    if (!isAuthenticated) {
+      const loginUrl = new URL("/login", request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+    if (userRole === "admin") {
+      const adminUrl = new URL("/admin", request.url);
+      return NextResponse.redirect(adminUrl);
     }
     return NextResponse.next();
   }
@@ -104,10 +116,16 @@ export function middleware(request: NextRequest) {
       const adminUrl = new URL("/admin", request.url);
       return NextResponse.redirect(adminUrl);
     }
+    
+    // Redirect employees away from root to /employee
+    if (pathname === "/" && userRole !== "admin") {
+      const employeeUrl = new URL("/employee", request.url);
+      return NextResponse.redirect(employeeUrl);
+    }
 
     // Authenticated users attempting to go to login or register are sent to their respective dashboard
     if (isAuthRoute) {
-      const targetPath = userRole === "admin" ? "/admin" : "/";
+      const targetPath = userRole === "admin" ? "/admin" : "/employee";
       const redirectUrl = new URL(targetPath, request.url);
       return NextResponse.redirect(redirectUrl);
     }

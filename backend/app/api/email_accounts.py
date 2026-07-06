@@ -38,6 +38,7 @@ class EmailAccountCreate(BaseModel):
     imap_port: int
     password: str
     filters: EmailFilterCreate | None = None
+    ingestion_approach: str | None = None
 
 class EmailAccountUpdate(BaseModel):
     provider: str
@@ -46,6 +47,7 @@ class EmailAccountUpdate(BaseModel):
     imap_port: int
     password: str | None = None  # optional, if omitted we keep existing password
     filters: EmailFilterCreate | None = None
+    ingestion_approach: str | None = None
 
 class EmailFilterResponse(BaseModel):
     id: UUID
@@ -231,6 +233,21 @@ def save_email_account(
             )
             db.add(new_filter)
 
+        # 5. Handle global sync setting ingestion approach
+        from backend.app.models import EmailSyncSetting
+        sync_settings = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+        if not sync_settings:
+            sync_settings = EmailSyncSetting(
+                user_id=user_uuid,
+                ingestion_approach=request.ingestion_approach or "approach_1",
+                trusted_suppliers="",
+                keyword_filters="catalog, catalogue, price, offer, quote",
+                pending_approvals=""
+            )
+            db.add(sync_settings)
+        elif request.ingestion_approach:
+            sync_settings.ingestion_approach = request.ingestion_approach
+
         db.commit()
         db.refresh(new_account)
         
@@ -291,7 +308,7 @@ def get_sync_settings(
                 poll_interval_minutes=15,  # Default to 15 minutes
                 auto_extract_catalog=True,
                 notify_on_new_catalog=True,
-                ingestion_approach="approach_2",
+                ingestion_approach="approach_1",
                 trusted_suppliers="",
                 keyword_filters="catalog, catalogue, price, offer, quote",
                 pending_approvals=""
@@ -322,7 +339,7 @@ def update_sync_settings(
     if not settings_row:
         settings_row = EmailSyncSetting(
             user_id=user_uuid,
-            ingestion_approach="approach_2",
+            ingestion_approach="approach_1",
             trusted_suppliers="",
             keyword_filters="catalog, catalogue, price, offer, quote",
             pending_approvals=""
@@ -436,6 +453,21 @@ def update_email_account(
         else:
             if existing_filter:
                 db.delete(existing_filter)
+
+        # 5. Update global sync settings ingestion approach
+        from backend.app.models import EmailSyncSetting
+        sync_settings = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+        if not sync_settings:
+            sync_settings = EmailSyncSetting(
+                user_id=user_uuid,
+                ingestion_approach=request.ingestion_approach or "approach_1",
+                trusted_suppliers="",
+                keyword_filters="catalog, catalogue, price, offer, quote",
+                pending_approvals=""
+            )
+            db.add(sync_settings)
+        elif request.ingestion_approach:
+            sync_settings.ingestion_approach = request.ingestion_approach
                 
         db.commit()
         db.refresh(account)

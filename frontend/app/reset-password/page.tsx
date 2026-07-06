@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, Suspense, FormEvent } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, ShieldCheck, Lock, Eye, EyeOff, CheckCircle } from "lucide-react";
+import Loader from "@/components/Loader";
 
 function ResetPasswordContent() {
   const router = useRouter();
@@ -49,7 +50,7 @@ function ResetPasswordContent() {
       });
   }, [token]);
 
-  async function handleResetSubmit(e: FormEvent) {
+  async function handleResetSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -227,15 +228,7 @@ function ResetPasswordContent() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={
-      <main className="auth-page">
-        <div className="auth-card-wrapper">
-          <div className="auth-card" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "200px" }}>
-            <Loader2 className="animate-spin" style={{ color: "#0f7a5f" }} />
-          </div>
-        </div>
-      </main>
-    }>
+    <Suspense fallback={<Loader variant="card" />}>
       <ResetPasswordContent />
     </Suspense>
   );

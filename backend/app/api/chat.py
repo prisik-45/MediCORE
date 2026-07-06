@@ -17,8 +17,11 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
     
     # Extract and verify token query parameter for secure tenant-isolation
     token = websocket.query_params.get("token")
-    tenant_id = None
     if token:
+        token = token.strip('"\'')
+    
+    tenant_id = None
+    if token and len(token.split('.')) == 3:
         try:
             from uuid import UUID
             from backend.app.db import get_supabase
@@ -34,8 +37,8 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
                 else:
                     tenant_id = user_uuid
         except Exception as e:
-            logger.error(f"WebSocket authentication failed: {e}")
-            await websocket.send_json({"type": "error", "message": "Authentication failed. Connection closed."})
+            logger.exception("WebSocket authentication failed with exception")
+            await websocket.send_json({"type": "error", "message": f"Authentication failed. Connection closed. Details: {str(e)}"})
             await websocket.close()
             return
 
