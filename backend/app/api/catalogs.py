@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -66,7 +66,11 @@ def list_catalog_emails(
     stmt = (
         select(CatalogEmail, Supplier.name)
         .join(Supplier, Supplier.id == CatalogEmail.supplier_id)
-        .where(CatalogEmail.tenant_id == user_uuid)
+        .where(
+            CatalogEmail.tenant_id == user_uuid,
+            CatalogEmail.processing_status == "completed",
+            exists().where(CatalogItem.catalog_email_id == CatalogEmail.id),
+        )
     )
     if not settings.mock_data_enabled:
         stmt = stmt.where(CatalogEmail.raw_email_id.not_like("core-mock-catalog-%"))
@@ -98,10 +102,29 @@ def list_catalog_items(
 ) -> list[dict]:
     settings = get_settings()
     user_uuid = UUID(current_user["tenant_id"])
+    latest_items = (
+        select(
+            CatalogItem.supplier_id.label("supplier_id"),
+            CatalogItem.normalized_name.label("normalized_name"),
+            func.max(CatalogEmail.received_at).label("latest_received_at"),
+        )
+        .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+        .where(CatalogItem.tenant_id == user_uuid)
+        .group_by(CatalogItem.supplier_id, CatalogItem.normalized_name)
+        .subquery()
+    )
     stmt = (
         select(CatalogItem, Supplier.name, CatalogEmail.received_at)
         .join(Supplier, Supplier.id == CatalogItem.supplier_id)
-        .outerjoin(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+        .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+        .join(
+            latest_items,
+            and_(
+                latest_items.c.supplier_id == CatalogItem.supplier_id,
+                latest_items.c.normalized_name == CatalogItem.normalized_name,
+                latest_items.c.latest_received_at == CatalogEmail.received_at,
+            ),
+        )
         .where(CatalogItem.tenant_id == user_uuid)
     )
     if not settings.mock_data_enabled:

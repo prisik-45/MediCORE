@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, use } from "react";
+import { useRouter } from "next/navigation";
 import Loader from "@/components/Loader";
 import { 
   Users, 
@@ -20,7 +21,11 @@ import {
   CalendarRange,
   UserX,
   Info,
-  Edit
+  Edit,
+  LayoutDashboard,
+  LogOut,
+  Settings,
+  Menu
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -51,7 +56,58 @@ type AdminTab = "dashboard" | "employees" | "database" | "settings";
 
 export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?: string[] }> }) {
   const resolvedParams = use(params);
+  const router = useRouter();
   const [activeTab, setActiveTabState] = useState<AdminTab>("dashboard");
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [adminName, setAdminName] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    // Verify session and role on component mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.push("/login");
+        return;
+      }
+      
+      const role = session.user.user_metadata?.role;
+      if (role !== "admin") {
+        router.push("/login");
+        return;
+      }
+      
+      setAdminName(session.user.user_metadata?.full_name || "Admin");
+      setSessionLoading(false);
+    });
+  }, [router]);
+
+  useEffect(() => {
+    // Manage sidebar-collapsed body class to align margins globally
+    if (sidebarCollapsed) {
+      document.body.classList.add("sidebar-collapsed");
+    } else {
+      document.body.classList.remove("sidebar-collapsed");
+    }
+    return () => {
+      document.body.classList.remove("sidebar-collapsed");
+    };
+  }, [sidebarCollapsed]);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    document.cookie = `sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax; Secure`;
+    router.push("/login");
+  }
+
+  const setActiveTab = (tab: AdminTab) => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") {
+      const path = tab === "dashboard" ? "/admin" : `/admin/${tab}`;
+      if (window.location.pathname !== path) {
+        window.history.pushState({ tab }, "", path);
+      }
+    }
+  };
 
   // Sync route param on initial mount / page load or popstate
   useEffect(() => {
@@ -76,6 +132,7 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
         setActiveTabState(tab || "dashboard");
       }
     };
+    handlePopState();
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
@@ -362,7 +419,7 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
       setConfirmRemoveId(null);
       fetchEmployees();
     } catch (err: any) {
-      alert(err.message);
+      setEmployeesError(err.message);
     } finally {
       setRemoveLoading(false);
     }
@@ -387,7 +444,7 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
       setConfirmDeleteId(null);
       fetchEmployees();
     } catch (err: any) {
-      alert(err.message);
+      setEmployeesError(err.message);
     } finally {
       setDeleteLoading(false);
     }
@@ -416,7 +473,7 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
         setResetSuccessMsg(null);
       }, 2500);
     } catch (err: any) {
-      alert(err.message);
+      setEmployeesError(err.message);
     } finally {
       setResetLoading(false);
     }
@@ -436,8 +493,9 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
 
   // --- RENDERING VIEWS ---
 
-  if (activeTab === "dashboard") {
-    if (dashboardLoading) {
+  const renderTabContent = () => {
+    if (activeTab === "dashboard") {
+      if (dashboardLoading) {
       return <Loader variant="tab" />;
     }
     if (dashboardError) {
@@ -1117,5 +1175,112 @@ export default function AdminWorkspacePage({ params }: { params: Promise<{ tab?:
     );
   }
 
-  return null;
+    return null;
+  };
+
+  if (sessionLoading) {
+    return <Loader variant="card" title="Verifying Admin Session" subtitle="Loading dashboard metrics..." />;
+  }
+
+  return (
+    <>
+      {/* Navbar */}
+      <nav className="navbar">
+        <div className="navbar-brand" style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <h1>MediCORE</h1>
+          <span style={{ fontSize: "12.5px", color: "var(--muted)", fontWeight: 500, letterSpacing: "0.02em", borderLeft: "1px solid var(--line)", paddingLeft: "14px" }}>
+            Admin Portal
+          </span>
+        </div>
+        <div className="navbar-actions">
+          <div className="user-menu" style={{ cursor: "default" }}>
+            <div className="user-avatar">
+              {adminName ? adminName.split(" ").map((n: string) => n[0]).join("").toUpperCase() : "AD"}
+            </div>
+            <div className="user-info">
+              <p>{adminName}</p>
+              <span>Admin</span>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-content">
+          <div className="sidebar-top">
+            <span className="sidebar-top-label"><h2>Admin</h2></span>
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? <Menu size={20} /> : <X size={20} />}
+            </button>
+          </div>
+
+          <div className="sidebar-section">
+            <ul className="sidebar-nav">
+              <li className="sidebar-nav-item">
+                <button
+                  onClick={() => setActiveTab("dashboard")}
+                  className={`sidebar-nav-link ${activeTab === "dashboard" ? "active" : ""}`}
+                >
+                  <LayoutDashboard size={18} />
+                  <span>Dashboard</span>
+                </button>
+              </li>
+              <li className="sidebar-nav-item">
+                <button
+                  onClick={() => setActiveTab("employees")}
+                  className={`sidebar-nav-link ${activeTab === "employees" ? "active" : ""}`}
+                >
+                  <Users size={18} />
+                  <span>Employees</span>
+                </button>
+              </li>
+              <li className="sidebar-nav-item">
+                <button
+                  onClick={() => setActiveTab("database")}
+                  className={`sidebar-nav-link ${activeTab === "database" ? "active" : ""}`}
+                >
+                  <Database size={18} />
+                  <span>Database</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div className="sidebar-settings-section" style={{ marginTop: "auto" }}>
+            <div className="sidebar-section-title">Settings</div>
+            <ul className="sidebar-nav">
+              <li className="sidebar-nav-item">
+                <button
+                  onClick={() => setActiveTab("settings")}
+                  className={`sidebar-nav-link ${activeTab === "settings" ? "active" : ""}`}
+                >
+                  <Settings size={18} />
+                  <span>Settings</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div className="sidebar-footer">
+            <button type="button" onClick={handleLogout}>
+              <LogOut size={16} />
+              <span>Logout</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="app-shell">
+        <section className="dashboard">
+          {renderTabContent()}
+        </section>
+      </main>
+    </>
+  );
 }

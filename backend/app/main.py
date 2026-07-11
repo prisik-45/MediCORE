@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.api import catalogs, chat, health, ingestion, suppliers, webhooks, email_accounts, admin
+from backend.app.api import catalogs, chat, health, ingestion, suppliers, webhooks, email_accounts, admin, superadmin
 from backend.app.config import get_settings
 
 
@@ -41,11 +41,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "detail": "Internal Server Error",
-            "message": str(exc),
-            "type": exc.__class__.__name__
+            "detail": "Internal Server Error"
         }
     )
+
 
 app.include_router(health.router)
 app.include_router(suppliers.router, prefix="/api/suppliers", tags=["suppliers"])
@@ -54,6 +53,5 @@ app.include_router(ingestion.router, prefix="/api/ingestion", tags=["ingestion"]
 app.include_router(chat.router)
 app.include_router(email_accounts.router, prefix="/api/email-accounts", tags=["email-accounts"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(superadmin.router, prefix="/api/superadmin", tags=["superadmin"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
-
-

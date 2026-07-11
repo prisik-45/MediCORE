@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, UTC
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import exists, func, text
 from pydantic import BaseModel, EmailStr
 
 from backend.app.db import get_db, get_supabase, SessionLocal
@@ -26,6 +26,11 @@ class ResetPasswordCompleteRequest(BaseModel):
     token: str
     password: str
 
+class CompleteActivationRequest(BaseModel):
+    token: str
+    password: str
+    name: str
+
 # 1. Dashboard Metrics Endpoint
 @router.get("/dashboard-stats")
 def get_dashboard_stats(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin)):
@@ -35,7 +40,11 @@ def get_dashboard_stats(db: Session = Depends(get_db), current_user: dict = Depe
     total_employees = db.query(Profile).filter(Profile.tenant_id == tenant_uuid, Profile.role == "employee").count()
     
     # Total supplier emails processed for their tenant
-    total_emails = db.query(CatalogEmail).filter(CatalogEmail.tenant_id == tenant_uuid).count()
+    total_emails = db.query(CatalogEmail).filter(
+        CatalogEmail.tenant_id == tenant_uuid,
+        CatalogEmail.processing_status == "completed",
+        exists().where(CatalogItem.catalog_email_id == CatalogEmail.id),
+    ).count()
     
     # AI queries today (within last 24h)
     twenty_four_hours_ago = datetime.now(UTC) - timedelta(days=1)
@@ -87,6 +96,40 @@ def get_database_stats(db: Session = Depends(get_db), current_user: dict = Depen
         "searches_per_day": searches_day,
         "searches_per_month": searches_month
     }
+
+class AdminRegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    organisation: str
+
+@router.post("/register-admin", status_code=status.HTTP_201_CREATED)
+def register_admin(payload: AdminRegisterRequest, db: Session = Depends(get_db)):
+    # Verify that organisation does not already exist in database profiles
+    existing_org = db.query(Profile).filter(Profile.organisation == payload.organisation).first()
+    if existing_org:
+        raise HTTPException(status_code=400, detail="This organisation name is already registered.")
+
+    try:
+        supabase_client = get_supabase()
+        attributes = {
+            "email": payload.email,
+            "password": payload.password,
+            "email_confirm": True, # Auto-confirms email address (skips verification link)
+            "user_metadata": {
+                "full_name": payload.name.strip(),
+                "role": "admin",
+                "organisation": payload.organisation.strip()
+            }
+        }
+        supabase_client.auth.admin.create_user(attributes)
+        return {"success": True, "message": "Workspace registered. Awaiting Superadmin approval."}
+    except Exception as e:
+        logger.error(f"Failed to register admin workspace: {e}")
+        err_msg = str(e)
+        if "already exists" in err_msg.lower() or "unique" in err_msg.lower():
+            raise HTTPException(status_code=400, detail="An account with this email address is already registered.")
+        raise HTTPException(status_code=500, detail="Failed to create admin workspace registration.")
 
 # 3. Add Employee / Send Invite
 @router.post("/employees/invite", status_code=status.HTTP_201_CREATED)
@@ -168,6 +211,58 @@ def verify_activation_token(token: str, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=400, detail="Activation link has expired.")
     return {"email": invite.email, "name": invite.name}
+
+# 4b. Complete Employee Account Activation without email confirmation
+@router.post("/activate/complete")
+def complete_activation(payload: CompleteActivationRequest, db: Session = Depends(get_db)):
+    invite = db.query(EmployeeInvitation).filter(EmployeeInvitation.token == payload.token).first()
+    if not invite or invite.status != "Pending Activation":
+        raise HTTPException(status_code=400, detail="Invalid or already used activation token.")
+    if invite.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+        invite.status = "Expired"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Activation link has expired.")
+        
+    try:
+        supabase_client = get_supabase()
+        
+        # We need organization name from the inviting admin's profile
+        admin_profile = db.query(Profile).filter(Profile.id == invite.admin_id).first()
+        org_name = admin_profile.organisation if (admin_profile and admin_profile.organisation) else "MediCORE"
+        
+        # Create user via Supabase admin auth API.
+        # This allows setting email_confirm to True so that NO confirmation link is sent.
+        attributes = {
+            "email": invite.email,
+            "password": payload.password,
+            "email_confirm": True,
+            "user_metadata": {
+                "full_name": payload.name,
+                "role": "employee",
+                "organisation": org_name
+            }
+        }
+        
+        supabase_client.auth.admin.create_user(attributes)
+        
+        # We can also verify that the trigger has updated invitation status to Active.
+        # Just in case, let's commit/verify.
+        # (The PostgreSQL trigger handle_new_user should have set status = 'Active')
+        db.refresh(invite)
+        if invite.status == "Pending Activation":
+            invite.status = "Active"
+            db.commit()
+            
+        return {"success": True, "message": "Employee account activated successfully."}
+        
+    except Exception as e:
+        logger.error("Failed to create employee user in Supabase: %s", e)
+        # If user already exists in auth.users, let's provide a friendly message.
+        err_msg = str(e)
+        if "already exists" in err_msg.lower() or "unique" in err_msg.lower():
+            raise HTTPException(status_code=400, detail="An account with this email address has already been created.")
+        raise HTTPException(status_code=500, detail=f"Failed to activate account: {err_msg}")
+
 
 # 5. List Employees for current admin's organisation
 @router.get("/employees")

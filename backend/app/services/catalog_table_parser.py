@@ -61,9 +61,15 @@ def parse_catalog_table_text(
     reference_date: datetime | None = None,
 ) -> list[ExtractedCatalogItem]:
     items: list[ExtractedCatalogItem] = []
-    context = _table_context(text)
     seen: set[tuple[str, float, float, str]] = set()
+    context = _table_context(text)
     reference_date = reference_date or datetime.now(UTC)
+    for table_item in _parse_generic_table(text, context):
+        key = _item_key(table_item)
+        if key not in seen:
+            seen.add(key)
+            items.append(table_item)
+
     for line in _candidate_lines(text):
         cleaned = _clean_line(line)
         if not cleaned:
@@ -75,18 +81,19 @@ def parse_catalog_table_text(
                 continue
 
             ingredient_name = match.group("ingredient").strip(" -")
-            items.append(
-                ExtractedCatalogItem(
-                    ingredient_name=ingredient_name,
-                    normalized_name=_normalize_name(ingredient_name),
-                    price_per_unit=float(match.group("price")),
-                    currency="INR",
-                    available_qty=float(match.group("qty").replace(",", "")),
-                    unit=_normalize_unit(match.group("unit")),
-                    valid_until=_infer_valid_until(int(match.group("day")), month, reference_date),
-                    notes=(match.group("status") or "").strip() or None,
-                )
+            row_item = ExtractedCatalogItem(
+                ingredient_name=ingredient_name,
+                normalized_name=_normalize_name(ingredient_name),
+                price_per_unit=float(match.group("price")),
+                currency="INR",
+                available_qty=float(match.group("qty").replace(",", "")),
+                unit=_normalize_unit(match.group("unit")),
+                valid_until=_infer_valid_until(int(match.group("day")), month, reference_date),
+                notes=(match.group("status") or "").strip() or None,
             )
+            if _item_key(row_item) not in seen:
+                seen.add(_item_key(row_item))
+                items.append(row_item)
             continue
 
         quote_item = _parse_quotation_row(cleaned, context)
@@ -194,6 +201,109 @@ def _parse_quotation_row(line: str, context: dict[str, str | None]) -> Extracted
     )
 
 
+def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[ExtractedCatalogItem]:
+    rows: list[ExtractedCatalogItem] = []
+    lines = [_clean_line(line) for line in text.splitlines() if _clean_line(line)]
+    header: list[str] | None = None
+    header_map: dict[str, int] = {}
+
+    for line in lines:
+        parts = _split_table_line(line)
+        if len(parts) < 3:
+            continue
+
+        possible_map = _header_map(parts)
+        if {"name", "price"}.issubset(possible_map) and ("qty" in possible_map or "unit" in possible_map):
+            header = parts
+            header_map = possible_map
+            continue
+
+        if not header or not header_map:
+            continue
+
+        if len(parts) < len(header):
+            parts = parts + [""] * (len(header) - len(parts))
+
+        name = _cell(parts, header_map.get("name"))
+        if not name or _looks_like_header(name):
+            continue
+
+        price = _number_from_text(_cell(parts, header_map.get("price")))
+        if price is None:
+            continue
+
+        qty = _number_from_text(_cell(parts, header_map.get("qty"))) if "qty" in header_map else None
+        unit = _normalize_unit(_cell(parts, header_map.get("unit")) or context.get("quantity_unit") or "units")
+        currency = _currency_code(
+            _cell(parts, header_map.get("currency"))
+            or _currency_from_text(_cell(parts, header_map.get("price")))
+            or context.get("currency")
+            or "INR"
+        )
+        moq = _number_from_text(_cell(parts, header_map.get("moq"))) if "moq" in header_map else None
+        lead_time_days = _lead_time_days(_cell(parts, header_map.get("lead_time")))
+        notes_parts = []
+        pack = _cell(parts, header_map.get("pack"))
+        if pack:
+            notes_parts.append(f"packaging={pack}")
+        raw_price = _cell(parts, header_map.get("price"))
+        if raw_price:
+            notes_parts.append(f"original_price={raw_price}")
+
+        rows.append(
+            ExtractedCatalogItem(
+                ingredient_name=name,
+                normalized_name=_normalize_name(name),
+                price_per_unit=price,
+                currency=currency,
+                available_qty=qty or 0.0,
+                unit=unit,
+                lead_time_days=lead_time_days,
+                moq=moq,
+                notes="; ".join(notes_parts) if notes_parts else None,
+            )
+        )
+
+    return rows
+
+
+def _split_table_line(line: str) -> list[str]:
+    stripped = line.strip().strip("|")
+    if "\t" in stripped:
+        return [part.strip() for part in stripped.split("\t")]
+    if "|" in stripped:
+        return [part.strip() for part in stripped.split("|")]
+    if "," in stripped and len(stripped.split(",")) >= 3:
+        return [part.strip() for part in stripped.split(",")]
+    return [part.strip() for part in re.split(r"\s{2,}", stripped) if part.strip()]
+
+
+def _header_map(parts: list[str]) -> dict[str, int]:
+    aliases = {
+        "name": ("product", "item", "ingredient", "chemical", "material", "medicine", "api", "name"),
+        "qty": ("qty", "quantity", "stock", "available", "availability"),
+        "unit": ("unit", "uom"),
+        "price": ("price", "rate", "quote", "cost"),
+        "currency": ("currency", "curr"),
+        "moq": ("moq", "minimum order"),
+        "lead_time": ("lead", "delivery", "dispatch"),
+        "pack": ("pack", "packing", "packaging"),
+    }
+    mapped: dict[str, int] = {}
+    for index, part in enumerate(parts):
+        lowered = part.lower()
+        for key, names in aliases.items():
+            if key not in mapped and any(name in lowered for name in names):
+                mapped[key] = index
+    return mapped
+
+
+def _cell(parts: list[str], index: int | None) -> str:
+    if index is None or index >= len(parts):
+        return ""
+    return parts[index].strip()
+
+
 def _currency_code(raw: str | None) -> str:
     value = (raw or "").strip().upper()
     if value in {"$", "US$", "USD"}:
@@ -205,6 +315,13 @@ def _currency_code(raw: str | None) -> str:
     return value or "INR"
 
 
+def _currency_from_text(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    match = re.search(r"(US\$|\$|USD|INR|Rs\.?|₹|EUR|€)", raw, flags=re.IGNORECASE)
+    return match.group(1) if match else None
+
+
 def _number(raw: str | None) -> float | None:
     if raw is None:
         return None
@@ -212,6 +329,15 @@ def _number(raw: str | None) -> float | None:
         return float(raw.replace(",", ""))
     except ValueError:
         return None
+
+
+def _number_from_text(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    if raw.strip().lower() in {"na", "n/a", "-"}:
+        return None
+    match = re.search(r"\d[\d,]*(?:\.\d+)?", raw)
+    return _number(match.group(0)) if match else None
 
 
 def _extract_moq(text: str) -> tuple[float | None, str | None]:

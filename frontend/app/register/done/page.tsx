@@ -25,7 +25,6 @@ export default function RegisterDonePage() {
     } else {
       router.push("/");
     }
-    router.refresh();
   }
 
   return (

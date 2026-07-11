@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import Select, asc, desc, select
+from sqlalchemy import Select, and_, asc, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import CatalogItem, Supplier
@@ -17,10 +17,28 @@ class SupplierRanker:
         from sqlalchemy import or_
         
         settings = get_settings()
+        latest_items = (
+            select(
+                CatalogItem.supplier_id.label("supplier_id"),
+                CatalogItem.normalized_name.label("normalized_name"),
+                func.max(CatalogEmail.received_at).label("latest_received_at"),
+            )
+            .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .group_by(CatalogItem.supplier_id, CatalogItem.normalized_name)
+            .subquery()
+        )
         stmt: Select = (
             select(CatalogItem, Supplier, CatalogEmail.received_at)
             .join(Supplier, Supplier.id == CatalogItem.supplier_id)
-            .outerjoin(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .join(
+                latest_items,
+                and_(
+                    latest_items.c.supplier_id == CatalogItem.supplier_id,
+                    latest_items.c.normalized_name == CatalogItem.normalized_name,
+                    latest_items.c.latest_received_at == CatalogEmail.received_at,
+                ),
+            )
             .order_by(asc(CatalogItem.price_per_unit))
             .limit(plan.limit)
         )

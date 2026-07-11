@@ -34,7 +34,7 @@ export default function LoginPage() {
 
       const role = data.user?.user_metadata?.role;
       
-      if (loginRole === "admin" && role !== "admin") {
+      if (loginRole === "admin" && role !== "admin" && role !== "superadmin") {
         await supabase.auth.signOut();
         setError("This account is not configured as an administrator.");
         setLoading(false);
@@ -73,6 +73,12 @@ export default function LoginPage() {
           return;
         } else {
           const profileData = await res.json();
+          if (profileData.status === "Pending Approval") {
+            await supabase.auth.signOut();
+            setError("Your workspace registration is pending approval by the MediCORE Superadmin. You will be granted access once approved.");
+            setLoading(false);
+            return;
+          }
           if (profileData.status === "Disabled") {
             await supabase.auth.signOut();
             setError("You are not authorised to use MediCORE");
@@ -84,7 +90,9 @@ export default function LoginPage() {
         console.error("Failed to verify user profile during login:", err);
       }
 
-      if (role === "admin") {
+      if (role === "superadmin") {
+        router.push("/superadmin");
+      } else if (role === "admin") {
         router.push("/admin");
       } else {
         router.push("/");

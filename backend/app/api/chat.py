@@ -21,6 +21,7 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         token = token.strip('"\'')
     
     tenant_id = None
+    user_id = None
     if token and len(token.split('.')) == 3:
         try:
             from uuid import UUID
@@ -30,6 +31,7 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
             response = supabase_client.auth.get_user(token)
             if response and response.user:
                 user_uuid = UUID(response.user.id)
+                user_id = user_uuid
                 # Load profile to fetch shared tenant_id
                 profile = db.query(Profile).filter(Profile.id == user_uuid).first()
                 if profile and profile.tenant_id:
@@ -50,7 +52,7 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         while True:
             message = await websocket.receive_text()
             try:
-                result = engine.answer(message, tenant_id=tenant_id)
+                result = engine.answer(message, tenant_id=tenant_id, user_id=user_id)
                 await websocket.send_json({"type": "answer", "answer": result.answer, "rows": result.rows})
             except Exception as exc:
                 await websocket.send_json(

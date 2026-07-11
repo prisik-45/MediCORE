@@ -78,6 +78,11 @@ export function middleware(request: NextRequest) {
     
   const isSetupRoute = pathname.startsWith("/register/email-setup") || pathname.startsWith("/register/done");
   
+  // Route guard: only superadmin can access superadmin routes
+  if (pathname.startsWith("/superadmin")) {
+    return NextResponse.next();
+  }
+
   // Route guard: only admin can access admin routes
   if (pathname.startsWith("/admin")) {
     if (!isAuthenticated) {
@@ -101,6 +106,10 @@ export function middleware(request: NextRequest) {
       const adminUrl = new URL("/admin", request.url);
       return NextResponse.redirect(adminUrl);
     }
+    if (userRole === "superadmin") {
+      const superadminUrl = new URL("/superadmin", request.url);
+      return NextResponse.redirect(superadminUrl);
+    }
     return NextResponse.next();
   }
   
@@ -116,16 +125,27 @@ export function middleware(request: NextRequest) {
       const adminUrl = new URL("/admin", request.url);
       return NextResponse.redirect(adminUrl);
     }
+
+    // Redirect superadmins away from employee dashboard to superadmin portal
+    if (pathname === "/" && userRole === "superadmin") {
+      const superadminUrl = new URL("/superadmin", request.url);
+      return NextResponse.redirect(superadminUrl);
+    }
     
     // Redirect employees away from root to /employee
-    if (pathname === "/" && userRole !== "admin") {
+    if (pathname === "/" && userRole !== "admin" && userRole !== "superadmin") {
       const employeeUrl = new URL("/employee", request.url);
       return NextResponse.redirect(employeeUrl);
     }
 
     // Authenticated users attempting to go to login or register are sent to their respective dashboard
     if (isAuthRoute) {
-      const targetPath = userRole === "admin" ? "/admin" : "/employee";
+      let targetPath = "/employee";
+      if (userRole === "superadmin") {
+        targetPath = "/superadmin";
+      } else if (userRole === "admin") {
+        targetPath = "/admin";
+      }
       const redirectUrl = new URL(targetPath, request.url);
       return NextResponse.redirect(redirectUrl);
     }

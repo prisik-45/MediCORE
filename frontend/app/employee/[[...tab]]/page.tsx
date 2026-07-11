@@ -22,6 +22,7 @@ import {
   Users,
   X,
   Sliders,
+  Check,
   CheckCircle2,
   XCircle,
   RefreshCw,
@@ -351,11 +352,23 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     }
   }, [resolvedParams]);
 
+  useEffect(() => {
+    const handlePopState = () => {
+      const segment = window.location.pathname.split("/").filter(Boolean)[1] as SidebarTab | undefined;
+      setActiveTabState(segment || "dashboard");
+    };
+    handlePopState();
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const setActiveTab = (tab: SidebarTab) => {
     setActiveTabState(tab);
     if (typeof window !== "undefined") {
-      const path = `/employee/${tab === "dashboard" ? "" : tab}`;
-      window.history.pushState(null, "", path);
+      const path = tab === "dashboard" ? "/employee" : `/employee/${tab}`;
+      if (window.location.pathname !== path) {
+        window.history.pushState({ tab }, "", path);
+      }
     }
   };
 
@@ -367,23 +380,16 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
 
   // Real-time email sync states
   const [isSyncingEmails, setIsSyncingEmails] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   async function handleSyncRealtimeEmails() {
     setIsSyncingEmails(true);
+    setSyncSuccess(false);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       
-      const hn = window.location.hostname;
-      const isLocal = hn === "localhost" || 
-                      hn === "127.0.0.1" || 
-                      hn === "0.0.0.0" ||
-                      hn.startsWith("192.168.") || 
-                      hn.startsWith("10.") || 
-                      hn.startsWith("172.") ||
-                      hn.endsWith(".local");
-      const apiBaseUrl = isLocal ? `http://${hn}:8000` : "https://backend-production-b29e.up.railway.app";
-
       const response = await fetch(`${apiBaseUrl}/api/ingestion/poll-now-sync-user`, {
         method: "POST",
         headers: {
@@ -391,18 +397,17 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
         },
       });
       if (response.ok) {
-        const res = await response.json();
-        alert(`Sync complete! Processed ${res.processed} new email(s).`);
-        router.refresh();
-        if (typeof window !== "undefined") {
-          window.location.reload();
-        }
+        await response.json().catch(() => null);
+        await refreshWorkspaceData();
+        setSyncSuccess(true);
+        setTimeout(() => {
+          setSyncSuccess(false);
+        }, 2000);
       } else {
-        alert("Failed to sync emails. Please verify your connection.");
+        console.error("Email sync failed", response.status, await response.text().catch(() => ""));
       }
     } catch (err) {
       console.error(err);
-      alert("An unexpected error occurred during email sync.");
     } finally {
       setIsSyncingEmails(false);
     }
@@ -1150,6 +1155,16 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
   }, [apiBaseUrl, authUser, dataRefreshKey]);
 
   useEffect(() => {
+    if (!authUser) return;
+    const intervalId = window.setInterval(() => {
+      setDataRefreshKey((current) => current + 1);
+      fetchEmailSyncSettings();
+      fetchConnectedAccounts();
+    }, 30000);
+    return () => window.clearInterval(intervalId);
+  }, [authUser, apiBaseUrl]);
+
+  useEffect(() => {
     if (authUser?.name) {
       setMessages((current) => {
         if (
@@ -1181,10 +1196,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     socket.onmessage = (event) => {
       const payload = JSON.parse(event.data);
       if (payload.type === "status") {
-        // Skip "Planning query" status messages
-        if (payload.message !== "Planning query") {
-          setMessages((current) => [...current, { role: "status", text: payload.message }]);
-        }
+        console.debug("ProcuraAI status", payload.message);
       }
       if (payload.type === "answer") {
         setIsTypingResponse(false);
@@ -1193,7 +1205,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       }
       if (payload.type === "error") {
         setIsTypingResponse(false);
-        setMessages((current) => [...current, { role: "status", text: payload.message }]);
+        console.error("ProcuraAI query failed", payload.message);
       }
     };
     socketRef.current = socket;
@@ -1316,6 +1328,14 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     return fetch(url, { ...options, headers });
   }
 
+  async function refreshWorkspaceData() {
+    setDataRefreshKey((current) => current + 1);
+    await Promise.allSettled([
+      fetchConnectedAccounts(),
+      fetchEmailSyncSettings(),
+    ]);
+  }
+
   async function fetchConnectedAccounts() {
     setLoadingAccounts(true);
     try {
@@ -1400,7 +1420,8 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     });
 
     try {
-      await authFetch(`${apiBaseUrl}/api/ingestion/poll-now`, { method: "POST" });
+      await authFetch(`${apiBaseUrl}/api/ingestion/poll-now-sync-user`, { method: "POST" });
+      await refreshWorkspaceData();
     } catch (e) {
       console.error("Error triggering immediate poll:", e);
     }
@@ -1490,7 +1511,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
         setDataRefreshKey((current) => current + 1);
       } else {
         const data = await res.json();
-        alert(data.detail || "Failed to save email account credentials.");
+        setTestResult({ success: false, message: data.detail || "Failed to save email account credentials." });
       }
     } catch (error) {
       console.error("Error saving email account:", error);
@@ -1515,7 +1536,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
         setDataRefreshKey((current) => current + 1);
         setDisconnectAccountConfirmId(null);
       } else {
-        alert("Failed to delete account from server.");
+        console.error("Could not disconnect the account", res.status);
       }
     } catch (error) {
       console.error("Error disconnecting account:", error);
@@ -1562,11 +1583,10 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
         setDataRefreshKey((current) => current + 1);
         setDeleteEmailConfirmId(null);
       } else {
-        alert("Failed to delete catalog email from server.");
+        console.error("Could not delete catalogue email", res.status);
       }
     } catch (error) {
       console.error("Error deleting catalog email:", error);
-      alert("Failed to delete catalog email. Please try again.");
     } finally {
       setDeleteEmailLoading(false);
     }
@@ -1657,27 +1677,58 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
           <button
             type="button"
             onClick={handleSyncRealtimeEmails}
-            disabled={isSyncingEmails}
+            disabled={isSyncingEmails || syncSuccess}
             style={{
               display: "flex",
               alignItems: "center",
               gap: "6px",
               background: "none",
-              border: "1px solid var(--line)",
+              border: syncSuccess ? "1px solid #0d6a50" : "1px solid var(--line)",
               borderRadius: "8px",
               padding: "6px 12px",
               fontSize: "12px",
               fontWeight: 500,
-              color: "var(--ink)",
-              cursor: "pointer",
+              color: syncSuccess ? "#0d6a50" : "var(--ink)",
+              cursor: (isSyncingEmails || syncSuccess) ? "not-allowed" : "pointer",
               transition: "all 0.2s",
             }}
-            onMouseOver={(e) => { e.currentTarget.style.background = "#fafcfb"; e.currentTarget.style.borderColor = "var(--accent)"; }}
-            onMouseOut={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "var(--line)"; }}
+            onMouseOver={(e) => {
+              if (!isSyncingEmails && !syncSuccess) {
+                e.currentTarget.style.background = "#fafcfb";
+                e.currentTarget.style.borderColor = "var(--accent)";
+              }
+            }}
+            onMouseOut={(e) => {
+              if (!isSyncingEmails && !syncSuccess) {
+                e.currentTarget.style.background = "none";
+                e.currentTarget.style.borderColor = "var(--line)";
+              }
+            }}
           >
-            <RefreshCw size={14} className={isSyncingEmails ? "animate-spin" : ""} style={{ color: "var(--accent)" }} />
-            <span>{isSyncingEmails ? "Syncing..." : "Sync Emails"}</span>
+            {syncSuccess ? (
+              <>
+                <Check size={14} style={{ color: "#0d6a50" }} />
+                <span style={{ color: "#0d6a50", fontWeight: 600 }}>Synced</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw size={14} className={isSyncingEmails ? "animate-spin" : ""} style={{ color: "var(--accent)" }} />
+                <span>{isSyncingEmails ? "Syncing..." : "Sync Emails"}</span>
+              </>
+            )}
           </button>
+          {syncNotice && (
+            <span
+              style={{
+                maxWidth: "280px",
+                color: "var(--muted)",
+                fontSize: "12px",
+                lineHeight: 1.35,
+              }}
+            >
+              {syncNotice}
+            </span>
+          )}
 
           <div className="user-menu" onClick={() => setUserMenuOpen(!userMenuOpen)}>
             <div className="user-avatar">{userInitials(authUser.name, authUser.email)}</div>

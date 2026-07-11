@@ -1846,6 +1846,63 @@ tbody tr:hover {
   color: #fff;
 }
 
+.auth-card .input-with-icon {
+  position: relative;
+  display: block;
+}
+
+.auth-card .input-with-icon .field-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.auth-card .input-with-icon input {
+  width: 100%;
+  height: 48px;
+  padding-left: 44px;
+}
+
+.auth-card .input-with-icon input.password-input {
+  padding-right: 48px;
+}
+
+.auth-card .password-toggle-btn,
+.auth-card button.password-toggle-btn {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 !important;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+}
+
+.auth-card .auth-submit-btn {
+  width: 100%;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 .auth-error,
 .settings-status {
   border: 1px solid #f0c2a4;
@@ -2243,4 +2300,4 @@ tbody tr:hover {
 @keyframes modern-spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
-}
+}

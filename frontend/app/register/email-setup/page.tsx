@@ -193,7 +193,6 @@ export default function EmailSetupPage() {
       }
 
       router.push("/register/done");
-      router.refresh();
     } catch (err: any) {
       setError(err.message || "Failed to save settings. Please try again.");
       setSaving(false);
@@ -853,7 +852,8 @@ export default function EmailSetupPage() {
           padding-right: 44px !important;
         }
 
-        .password-toggle-btn {
+        .auth-card .password-toggle-btn,
+        .auth-card button.password-toggle-btn {
           position: absolute;
           right: 14px;
           top: 50%;
@@ -863,17 +863,20 @@ export default function EmailSetupPage() {
           padding: 0 !important;
           color: #66736d !important;
           cursor: pointer;
-          display: flex;
+          display: inline-flex !important;
           align-items: center;
           justify-content: center;
           transition: color 0.2s;
           z-index: 10;
-          width: auto !important;
-          min-height: unset !important;
+          width: 36px !important;
+          min-width: 36px !important;
+          max-width: 36px !important;
+          height: 36px !important;
+          min-height: 36px !important;
           box-shadow: none !important;
         }
 
-        .password-toggle-btn:hover {
+        .auth-card .password-toggle-btn:hover {
           color: #17211c;
         }
 

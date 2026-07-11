@@ -42,6 +42,12 @@ def get_supplier_domain(sender: str) -> str:
     return domain
 
 
+def _nullable_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 2)
+
+
 class EmailIngestionService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -371,7 +377,15 @@ class EmailIngestionService:
 
     def _store_catalog_items(self, catalog_email: CatalogEmail, supplier: Supplier, items, text: str, tenant_id: Any | None = None) -> int:
         count = 0
+        active_tenant_id = tenant_id or supplier.tenant_id
         for item in items:
+            if not self._catalog_item_changed(catalog_email, supplier, item, active_tenant_id):
+                logger.info(
+                    "Skipping unchanged catalogue item supplier=%s item=%s",
+                    supplier.id,
+                    item.normalized_name or item.ingredient_name,
+                )
+                continue
             item_text = (
                 f"{item.normalized_name} {item.ingredient_name} "
                 f"{item.available_qty} {item.unit} {item.price_per_unit} {item.currency}"
@@ -383,7 +397,7 @@ class EmailIngestionService:
             self.db.add(
                 CatalogItem(
                     id=uuid4(),
-                    tenant_id=tenant_id or supplier.tenant_id,
+                    tenant_id=active_tenant_id,
                     catalog_email_id=catalog_email.id,
                     supplier_id=supplier.id,
                     ingredient_name=item.ingredient_name,
@@ -401,6 +415,40 @@ class EmailIngestionService:
             )
             count += 1
         return count
+
+    def _catalog_item_changed(
+        self,
+        catalog_email: CatalogEmail,
+        supplier: Supplier,
+        item,
+        tenant_id: Any,
+    ) -> bool:
+        normalized_name = item.normalized_name or item.ingredient_name.lower()
+        previous = (
+            self.db.query(CatalogItem)
+            .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .filter(
+                CatalogItem.tenant_id == tenant_id,
+                CatalogItem.supplier_id == supplier.id,
+                CatalogItem.normalized_name == normalized_name,
+                CatalogItem.catalog_email_id != catalog_email.id,
+            )
+            .order_by(CatalogEmail.received_at.desc())
+            .first()
+        )
+        if previous is None:
+            return True
+
+        return any(
+            [
+                round(float(previous.price_per_unit), 4) != round(float(item.price_per_unit), 4),
+                (previous.currency or "").upper() != (item.currency or "").upper(),
+                round(float(previous.available_qty), 2) != round(float(item.available_qty or 0), 2),
+                (previous.unit or "").lower() != (item.unit or "").lower(),
+                (previous.lead_time_days or None) != (item.lead_time_days or None),
+                _nullable_float(previous.moq) != _nullable_float(item.moq),
+            ]
+        )
 
     def _touch_supplier_last_email(self, supplier: Supplier, received_at: datetime) -> None:
         if supplier.last_email_date is None or received_at > supplier.last_email_date:
@@ -824,7 +872,6 @@ class EmailIngestionService:
                             precedence = message.get("Precedence", "")
                             if "promotions" in labels.lower() or "category-promo" in labels.lower() or list_unsubscribe or precedence.lower() in ("bulk", "list"):
                                 logger.info("Skipping email id=%s because it matches promotions/bulk tab signature", raw_id_str)
-                                self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: Promotion/Newsletter tab", tenant_id=active_tenant_id, email_date=email_date)
                                 self._mark_seen(client, msg_id)
                                 continue
 
@@ -855,7 +902,6 @@ class EmailIngestionService:
                         # Filter: Require attachment
                         if active_filter and active_filter.require_attachment and not attachments:
                             logger.info("Skipping email id=%s because attachment is required but none found", raw_id_str)
-                            self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: Attachment required but none found", tenant_id=active_tenant_id, email_date=email_date)
                             self._mark_seen(client, msg_id)
                             continue
 
@@ -863,14 +909,12 @@ class EmailIngestionService:
                             sender_terms = self._csv_terms(active_filter.sender_keywords)
                             if sender_terms and not self._sender_matches_any(sender, display_name, sender_terms):
                                 logger.info("Skipping email id=%s because sender filter did not match", raw_id_str)
-                                self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: Sender filter mismatch", tenant_id=active_tenant_id, email_date=email_date)
                                 self._mark_seen(client, msg_id)
                                 continue
 
                             subject_terms = self._csv_terms(active_filter.subject_keywords)
                             if subject_terms and not self._text_matches_any(subject, subject_terms):
                                 logger.info("Skipping email id=%s because subject filter did not match", raw_id_str)
-                                self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: Subject filter mismatch", tenant_id=active_tenant_id, email_date=email_date)
                                 self._mark_seen(client, msg_id)
                                 continue
 
@@ -878,15 +922,16 @@ class EmailIngestionService:
                         if approach == "approach_2" and sync_setting:
                             domain = get_supplier_domain(sender)
                             trusted_list = self._csv_terms(sync_setting.trusted_suppliers)
+                            keywords = self._csv_terms(sync_setting.keyword_filters)
+                            if keywords and not self._text_matches_any(subject, keywords):
+                                logger.info("Skipping email id=%s because approval-mode subject keywords did not match", raw_id_str)
+                                self._mark_seen(client, msg_id)
+                                continue
 
                             is_trusted = (sender.lower() in trusted_list) or (domain in trusted_list)
                             if not is_trusted:
-                                # Check if subject/body matches keywords
-                                keywords = self._csv_terms(sync_setting.keyword_filters)
-                                matches_keywords = (
-                                    self._text_matches_any(subject, keywords)
-                                    or self._text_matches_any(body_text, keywords)
-                                )
+                                # Approval mode is intentionally subject-first. Body matches are too noisy for newsletters.
+                                matches_keywords = not keywords or self._text_matches_any(subject, keywords)
 
                                 if matches_keywords and parse_targets:
                                     # New supplier alert! Add to pending_approvals and DO NOT mark read
@@ -902,7 +947,8 @@ class EmailIngestionService:
                                             "sender": sender,
                                             "supplier_name": display_name or sender,
                                             "subject": subject,
-                                            "date": email_date.isoformat()
+                                            "date": email_date.isoformat(),
+                                            "reason": "Subject keyword matched; supplier approval required",
                                         })
                                         sync_setting.pending_approvals = json.dumps(pending_list)
                                         self.db.commit()
@@ -911,7 +957,6 @@ class EmailIngestionService:
                                 else:
                                     # Doesn't match keywords or has no supported content, skip and mark as seen
                                     logger.info("Skipping non-supplier email id=%s from=%s subject=%r", raw_id_str, sender, subject)
-                                    self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: Not trusted / keywords mismatch", tenant_id=active_tenant_id, email_date=email_date)
                                     self._mark_seen(client, msg_id)
                                     continue
 
@@ -925,7 +970,7 @@ class EmailIngestionService:
 
                             self._mark_seen(client, msg_id)
                         else:
-                            self._create_failed_email_record(raw_id_str, sender, display_name, subject, "Skipped: No parseable payload", tenant_id=active_tenant_id, email_date=email_date)
+                            logger.info("Skipping email id=%s because it had no parseable payload", raw_id_str)
                             self._mark_seen(client, msg_id)
 
                     except Exception as inner_e:

@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Any
+from uuid import uuid4
 
 from redis import Redis
 from redis.exceptions import RedisError
@@ -19,11 +20,17 @@ class NaturalLanguageQueryEngine:
         self.llm = GroqClient()
         self.ranker = SupplierRanker(db)
 
-    def answer(self, question: str, tenant_id: Any | None = None) -> ChatResponse:
-        cache_key = f"chat:answer:v3:{tenant_id}:{question.strip().lower()}"
+    def _answer(
+        self,
+        question: str,
+        tenant_id: Any | None = None,
+        user_id: Any | None = None,
+    ) -> ChatResponse:
+        cache_key = f"chat:answer:v4:{tenant_id}:{question.strip().lower()}"
         cached = self._cache_get(cache_key)
         if cached:
             payload = json.loads(cached)
+            self._log_query(question, tenant_id=tenant_id, user_id=user_id, operation_type="cached")
             return ChatResponse(**payload)
 
         try:
@@ -32,12 +39,14 @@ class NaturalLanguageQueryEngine:
             plan = self._fallback_plan(question)
 
         if plan.operation == "unrelated":
+            self._log_query(question, tenant_id=tenant_id, user_id=user_id, operation_type=plan.operation)
             return ChatResponse(
                 answer="I'm sorry, but I can only answer questions related to the MediCORE procurement intelligence system (such as supplier catalogues, ingredients/chemicals, prices, inventory, and procurement settings).",
                 rows=[]
             )
 
         validate_operation(plan.operation)
+        self._log_query(question, tenant_id=tenant_id, user_id=user_id, operation_type=plan.operation)
         rows = self._execute_plan(plan, tenant_id=tenant_id)
         try:
             answer = self.llm.summarize_answer(question, rows)
@@ -46,6 +55,39 @@ class NaturalLanguageQueryEngine:
         response = ChatResponse(answer=answer, rows=rows)
         self._cache_set(cache_key, response.model_dump_json())
         return response
+
+    def answer(
+        self,
+        question: str,
+        tenant_id: Any | None = None,
+        user_id: Any | None = None,
+    ) -> ChatResponse:
+        return self._answer(question, tenant_id=tenant_id, user_id=user_id)
+
+    def _log_query(
+        self,
+        question: str,
+        tenant_id: Any | None,
+        user_id: Any | None,
+        operation_type: str | None,
+    ) -> None:
+        if not tenant_id or not user_id:
+            return
+        try:
+            from backend.app.models import AIQueryLog
+
+            self.db.add(
+                AIQueryLog(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    query_text=question[:2000],
+                    operation_type=operation_type,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
 
     def _execute_plan(self, plan, tenant_id: Any | None = None) -> list[dict[str, Any]]:
         if plan.operation in {"supplier_compare", "best_price", "catalog_search"}:

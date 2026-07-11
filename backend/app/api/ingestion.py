@@ -56,7 +56,7 @@ def poll_now_sync_user(
     service = EmailIngestionService(db)
     for account in accounts:
         try:
-            total_processed += service.poll_account_inbox(account.id, force_retry_failed=True)
+            total_processed += service.poll_account_inbox(account.id)
         except Exception:
             pass
             

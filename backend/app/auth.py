@@ -98,10 +98,13 @@ def get_current_user(
                 db.rollback()
                 logger.error(f"Failed to auto-create profile: {se}")
             
-        if status_str == "Disabled":
+        if status_str in ("Disabled", "Pending Approval"):
+            detail_msg = "You are not authorised to use MediCORE"
+            if status_str == "Pending Approval":
+                detail_msg = "Your workspace registration is pending approval by the MediCORE Superadmin."
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not authorised to use MediCORE"
+                detail=detail_msg
             )
             
         return {
@@ -128,6 +131,17 @@ def get_current_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. Administrator privileges required."
+        )
+    return current_user
+
+def get_current_superadmin(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Enforce superadmin authorization rules."""
+    if current_user.get("role") != "superadmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Superadmin privileges required."
         )
     return current_user
 

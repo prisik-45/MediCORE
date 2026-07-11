@@ -9,7 +9,7 @@ import { Sparkles, ArrowRight, ShieldCheck, Mail, Lock, User, Briefcase, Loader2
 export default function RegisterStep1Page() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   const token = searchParams.get("token");
   const initialEmail = searchParams.get("email") || "";
   const initialName = searchParams.get("name") || "";
@@ -23,6 +23,7 @@ export default function RegisterStep1Page() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [signUpSuccess, setSignUpSuccess] = useState(false);
+  const [signUpPendingApproval, setSignUpPendingApproval] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -43,50 +44,219 @@ export default function RegisterStep1Page() {
     setLoading(true);
 
     try {
-      const { data, error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            organisation: isEmployee ? "" : organisation.trim(),
-            role: isEmployee ? "employee" : "admin",
-          },
-        },
-      });
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || (() => {
+        if (typeof window === "undefined") {
+          return "https://backend-production-b29e.up.railway.app";
+        }
+        const hn = window.location.hostname;
+        const isLocal = hn === "localhost" ||
+          hn === "127.0.0.1" ||
+          hn === "0.0.0.0" ||
+          hn.startsWith("192.168.") ||
+          hn.startsWith("10.") ||
+          hn.startsWith("172.") ||
+          hn.endsWith(".local");
+        return isLocal
+          ? `http://${hn}:8000`
+          : "https://backend-production-b29e.up.railway.app";
+      })();
 
-      if (authError) {
-        setError(authError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!data.user) {
-        // If data.user is null but no error, it usually means email is already registered and Supabase prevents enumeration.
-        // We still show the check email success to keep standard security flow.
-        setSignUpSuccess(true);
-        setLoading(false);
-        return;
-      }
-
-      // If Supabase email confirmation is enabled, session will be null because user has to verify email first.
-      if (!data.session) {
-        setSignUpSuccess(true);
-        setLoading(false);
-        return;
-      }
-
-      // If user is auto-confirmed, proceed to email setup directly if employee, otherwise go to done.
       if (isEmployee) {
+        // Complete activation using backend API to auto-confirm email and bypass Supabase signUp email trigger
+        const res = await fetch(`${apiBaseUrl}/api/admin/activate/complete`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            token: token,
+            password: password,
+            name: fullName.trim(),
+          }),
+        });
+
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || "Failed to complete account activation.");
+        }
+
+        // Now, log the user in immediately so that we have an active session
+        const loginRes = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password,
+        });
+
+        if (loginRes.error) {
+          throw new Error(loginRes.error.message || "Failed to log in after activation.");
+        }
+
+        // Redirect directly to email setup
         router.push("/register/email-setup");
       } else {
-        router.push("/register/done");
+        // Register Workspace Admin - Bypasses email confirmation but flags profile as Pending Approval
+        const res = await fetch(`${apiBaseUrl}/api/admin/register-admin`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: fullName.trim(),
+            email: email.trim(),
+            password: password,
+            organisation: organisation.trim(),
+          }),
+        });
+
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || "Workspace registration failed.");
+        }
+
+        // Set pending approval flag
+        setSignUpPendingApproval(true);
+        setLoading(false);
       }
       router.refresh();
-    } catch (err) {
-      setError("An unexpected error occurred. Please try again.");
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred. Please try again.");
       setLoading(false);
     }
+  }
+
+  if (signUpPendingApproval) {
+    return (
+      <main className="auth-page">
+        <div className="auth-card-wrapper">
+          <div className="auth-card-glow"></div>
+          <div className="auth-card" style={{ textAlign: "center" }}>
+            <div className="auth-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div className="brand-logo" style={{ background: "transparent", width: "64px", height: "64px", padding: 0, display: "inline-flex", justifyContent: "center", alignItems: "center", marginBottom: "12px" }}>
+                <img src="/Tarkshy.png" alt="Tarkshy Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              </div>
+              <h1>MediCORE</h1>
+              <p className="brand-tagline" style={{ margin: "2px 0 16px 0" }}>
+                <span style={{ fontSize: "12px", opacity: 0.8 }}>By Tarkshy Consultancy Services</span>
+              </p>
+            </div>
+
+            <div className="success-content" style={{ marginTop: "24px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div className="success-badge" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "64px", height: "64px", borderRadius: "50%", background: "rgba(15, 122, 95, 0.08)", color: "#0f7a5f", border: "1px solid rgba(15, 122, 95, 0.2)", margin: "24px auto 16px auto" }}>
+                <ShieldCheck className="check-icon" style={{ width: "32px", height: "32px" }} />
+              </div>
+              <h2 style={{ fontSize: "22px", fontWeight: 600, color: "#0f7a5f", margin: "0 0 10px 0" }}>Registration Received</h2>
+              <p style={{ fontSize: "14px", color: "#66736d", lineHeight: 1.6, margin: "0 0 24px 0" }}>
+                Your workspace registration for <strong style={{ color: "#17211c" }}>{organisation}</strong> has been submitted successfully.<br /><br />
+                It is currently <span style={{ color: "var(--accent)", fontWeight: 600 }}>Awaiting Approval</span> by the MediCORE Superadmin. You will be able to log in once approved.
+              </p>
+
+              <div style={{ padding: "16px", background: "#f4f7f5", borderRadius: "10px", fontSize: "12.5px", color: "#66736d", textAlign: "left", lineHeight: 1.5, marginBottom: "24px", width: "100%" }}>
+                <span style={{ fontWeight: 600, color: "#17211c" }}>Next Steps:</span> No email verification is required. Our team will review your workspace details and grant access shortly.
+              </div>
+
+              <Link href="/login" className="submit-btn" style={{ textDecoration: "none", width: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
+                Back to Sign In
+              </Link>
+            </div>
+          </div>
+        </div>
+        <style jsx global>{`
+          .auth-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at 10% 20%, rgba(244, 247, 245, 1) 0%, rgba(220, 228, 223, 0.4) 90%);
+            padding: 24px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          }
+
+          .auth-card-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 440px;
+          }
+
+          .auth-card-glow {
+            position: absolute;
+            top: -20px;
+            left: -20px;
+            right: -20px;
+            bottom: -20px;
+            background: radial-gradient(circle, rgba(15, 122, 95, 0.08) 0%, transparent 70%);
+            filter: blur(10px);
+            z-index: 0;
+            pointer-events: none;
+          }
+
+          .auth-card {
+            position: relative;
+            background: #ffffff;
+            border: 1px solid #dce4df;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 10px 30px rgba(23, 33, 28, 0.06), 0 1px 3px rgba(23, 33, 28, 0.02);
+            z-index: 1;
+          }
+
+          .auth-brand {
+            text-align: center;
+            margin-bottom: 32px;
+          }
+
+          .brand-logo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            background: rgba(15, 122, 95, 0.1);
+            color: #0f7a5f;
+            border-radius: 12px;
+            margin-bottom: 12px;
+          }
+
+          .auth-brand h1 {
+            margin: 0;
+            font-size: 26px;
+            font-weight: 800;
+            color: #0f7a5f;
+            letter-spacing: -0.5px;
+          }
+
+          .brand-tagline {
+            margin: 4px 0 0;
+            font-size: 12px;
+            color: #66736d;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+          }
+          
+          .submit-btn {
+            width: 100%;
+            height: 48px;
+            background: #0f7a5f;
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+          }
+
+          .submit-btn:hover {
+            background: #0d6a50;
+            box-shadow: 0 4px 12px rgba(15, 122, 95, 0.2);
+          }
+        `}</style>
+      </main>
+    );
   }
 
   if (signUpSuccess) {
@@ -122,8 +292,8 @@ export default function RegisterStep1Page() {
             <h2 style={{ fontSize: "22px", fontWeight: 500, color: "#17211c", margin: "0 0 10px 0" }}>Verify Your Email</h2>
             <p style={{ fontSize: "14px", color: "#66736d", lineHeight: 1.6, margin: "0 0 24px 0" }}>
               We have sent a verification link to <span style={{ color: "#17211c", fontWeight: 500 }}>{email}</span>.<br />
-              {isEmployee 
-                ? "Please click the link in the email to confirm your account and proceed to Email Setup." 
+              {isEmployee
+                ? "Please click the link in the email to confirm your account and proceed to Email Setup."
                 : "Please click the link in the email to confirm your account and log in."
               }
             </p>
@@ -179,8 +349,8 @@ export default function RegisterStep1Page() {
           <div className="auth-header-text" style={{ textAlign: "center" }}>
             <h2>{isEmployee ? "Employee Registration" : "Create Company Workspace (Admin)"}</h2>
             <p style={{ fontSize: "13px", color: "#66736d", marginTop: "4px" }}>
-              {isEmployee 
-                ? "Set up your employee credentials to start syncing catalogs" 
+              {isEmployee
+                ? "Set up your employee credentials to start syncing catalogs"
                 : "Register your organization to manage employee access"}
             </p>
           </div>
