@@ -351,7 +351,7 @@ class EmailIngestionService:
         # If it is a conversational email body or unstructured text file, run LLM directly
         if source_name.lower().endswith(".txt") or "email_body" in source_name.lower():
             try:
-                extracted = [normalize_item(item) for item in self.llm.extract_catalog_items(text)]
+                extracted = [normalize_item(item) for item in self.llm.extract_catalog_items(text, reference_date=reference_date)]
                 logger.info("LLM extracted %s catalogue row(s) from conversational source %s", len(extracted), source_name)
                 return extracted
             except Exception:
@@ -368,7 +368,7 @@ class EmailIngestionService:
             return parsed
 
         try:
-            extracted = [normalize_item(item) for item in self.llm.extract_catalog_items(text)]
+            extracted = [normalize_item(item) for item in self.llm.extract_catalog_items(text, reference_date=reference_date)]
             logger.info("LLM fallback extracted %s catalogue row(s) from %s", len(extracted), source_name)
             return extracted
         except Exception:
@@ -379,13 +379,8 @@ class EmailIngestionService:
         count = 0
         active_tenant_id = tenant_id or supplier.tenant_id
         for item in items:
-            if not self._catalog_item_changed(catalog_email, supplier, item, active_tenant_id):
-                logger.info(
-                    "Skipping unchanged catalogue item supplier=%s item=%s",
-                    supplier.id,
-                    item.normalized_name or item.ingredient_name,
-                )
-                continue
+            # Store all extracted items to maintain full historical snapshots of catalog emails
+            # and ensure they are not filtered out of lists.
             item_text = (
                 f"{item.normalized_name} {item.ingredient_name} "
                 f"{item.available_qty} {item.unit} {item.price_per_unit} {item.currency}"

@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from groq import Groq
@@ -29,15 +30,19 @@ class GroqClient:
         content = response.choices[0].message.content or "{}"
         return json.loads(content)
 
-    def extract_catalog_items(self, pdf_text: str) -> list[ExtractedCatalogItem]:
+    def extract_catalog_items(self, pdf_text: str, reference_date: datetime | None = None) -> list[ExtractedCatalogItem]:
+        date_context = ""
+        if reference_date:
+            date_context = f"\n- Reference Date Context: The email or document was received on {reference_date.strftime('%Y-%m-%d')}. Use this exact date to resolve relative validity expressions (e.g. 'valid for 15 days' resolves to valid_until='{reference_date.strftime('%Y-%m-%d')}' + 15 days, 'valid until end of month' resolves to the end of the current month, etc.).\n"
+
         system = (
             "You are an expert AI parser for pharmaceutical and chemical supplier catalogs. "
             "Your task is to analyze the provided text (which could be a structured table, a conversational email body, or an unstructured list/paragraph) "
             "and extract all catalog items into a strict JSON structure. "
             "Return a JSON object containing a single key 'items' mapping to an array of catalog items.\n\n"
             "Each catalog item in the array MUST contain the following fields:\n"
-            "- ingredient_name: The raw name of the chemical, ingredient, or medicine (e.g., 'Citric Acid Anhydrous', 'Paracetamol API')\n"
-            "- normalized_name: The lowercase, clean, canonical name of the ingredient, excluding grades or pack sizes (e.g., 'citric acid', 'paracetamol')\n"
+            "- ingredient_name: The raw name of the chemical, ingredient, or medicine (e.g., 'Citric Acid Anhydrous', 'Paracetamol API', 'Aspirin USP')\n"
+            "- normalized_name: The lowercase, clean, canonical name of the ingredient, excluding grades, CAS, or pack sizes (e.g., 'citric acid', 'paracetamol', 'aspirin')\n"
             "- price_per_unit: The numeric price from a price/rate column or phrase only. "
             "Never copy the quantity value into price_per_unit. If a price range is given, use the lowest price.\n"
             "- currency: The quoted transaction currency as a currency code. '$' or Price(USD) means 'USD'; "
@@ -57,10 +62,13 @@ class GroqClient:
             "3. Preserve the original quoted currency and commercial terms in notes, but keep price_per_unit numeric.\n"
             "4. Treat 'NA' prices as unavailable and skip that item unless a real numeric price is present elsewhere in the same row.\n\n"
             "CRITICAL INSTRUCTIONS FOR UNSTRUCTURED / CONVERSATIONAL TEXT:\n"
-            "1. Conversational Emails: If the text is an email conversation, locate all mentions of products, prices, quantities, and terms, and map them to the schema.\n"
+            f"1. Conversational Emails: If the text is an email conversation, locate all mentions of products, prices, quantities, and terms, and map them to the schema.{date_context}\n"
             "2. Implicit Packaging: If the text says 'Rs 3000 per 25kg bag', normalize this to a single item with price_per_unit=3000, unit='bag' or price_per_unit=120, unit='kg', depending on how the price is stated, but map it logically.\n"
-            "3. Purity & Grades: Keep grades (e.g. 'IP', 'USP', 'Food Grade') in the ingredient_name and notes, but strip them out of the normalized_name.\n"
-            "4. Thoroughness: Extract EVERY single product listed in the text. Do not summarize or skip any items."
+            "3. Purity & Grades: Keep grades (e.g. 'IP', 'USP', 'Food Grade') and CAS numbers in the ingredient_name and notes, but strip them out of the normalized_name.\n"
+            "4. Volume / Tiered Pricing: If the email lists multiple price tiers based on quantity (e.g., '$5/kg for 100kg, or $4/kg for 500kg'), extract EACH tier as a separate catalog item in the array, setting the price_per_unit, moq, and available_qty accordingly.\n"
+            "5. CAS Registry Numbers: Extract CAS numbers (e.g. 'CAS 50-78-2') and specify them clearly in the 'notes' field (e.g. 'CAS: 50-78-2').\n"
+            "6. Incoterms & Conditions: Extract Incoterms (FOB, CIF, EXW, DDP, CFR) or shipping details (e.g. 'FOB Shanghai', 'origin: India') and save them in 'notes'.\n"
+            "7. Thoroughness: Extract EVERY single product listed in the text. Do not summarize or skip any items."
         )
         payload = self._json_chat(system, pdf_text[:30000])
         extracted = []
@@ -74,18 +82,24 @@ class GroqClient:
     def plan_query(self, question: str) -> QueryPlan:
         system = (
             "You produce safe JSON query plans for a supplier catalogue database. "
-            "Allowed operations: supplier_compare, best_price, catalog_search, history_compare, supplier_activity, unrelated.\n"
+            "Allowed operations:\n"
+            "- supplier_compare: Compare prices and quantities of a specific chemical across different suppliers.\n"
+            "- best_price: Find the cheapest/best deal for a specific chemical.\n"
+            "- catalog_search: Search catalogs or find suppliers matching a general keyword or semantic context.\n"
+            "- history_compare: Compare historical prices or price trends for an ingredient.\n"
+            "- supplier_activity: Check recently received/synced emails, catalog activity, or sync statuses.\n"
+            "- unrelated: Use when the request is unrelated to supplier catalogs, prices, procurement, or setting configurations.\n\n"
             "If the question is unrelated to the MediCORE procurement system (e.g. general knowledge, personal advice, coding, entertainment, unrelated topics), "
-            "you MUST classify the operation as 'unrelated'.\n"
+            "you MUST classify the operation as 'unrelated'.\n\n"
             "Do not emit SQL. You MUST output a FLAT JSON object (no nested 'filters' object) containing the following fields:\n"
             "- operation: one of the allowed operations\n"
-            "- normalized_name: string or null (extract the chemical/ingredient name, e.g., 'citric acid')\n"
-            "- min_quantity: number or null (extract any minimum quantity requirements)\n"
-            "- unit: string or null\n"
+            "- normalized_name: string or null (extract the chemical/ingredient name and normalize it to its canonical lowercase form, e.g. 'vitamin c' -> 'ascorbic acid', 'nacl' -> 'sodium chloride', 'citric acid anhydrous' -> 'citric acid', 'paracetamol api' -> 'paracetamol')\n"
+            "- min_quantity: number or null (extract any minimum quantity/stock requirements)\n"
+            "- unit: string or null (normalize units, e.g. 'kg', 'g', 'litre', 'tablet')\n"
             "- semantic_query: string or null\n"
-            "- limit: number (default 10)\n"
+            "- limit: number (default 10)\n\n"
             "Example output for 'Compare citric acid':\n"
-            "{\"operation\": \"supplier_compare\", \"normalized_name\": \"citric acid\", \"min_quantity\": null, \"unit\": null, \"semantic_query\": null}"
+            "{\"operation\": \"supplier_compare\", \"normalized_name\": \"citric acid\", \"min_quantity\": null, \"unit\": null, \"semantic_query\": null, \"limit\": 10}"
         )
         payload = self._json_chat(system, question)
         return QueryPlan.model_validate(payload)
@@ -119,7 +133,10 @@ class GroqClient:
                         "3. Handling No Data: If there are no matching context rows or if you do not know the answer, "
                         "state politely that you couldn't find any matching data or records in the database, and offer to help with a different procurement query. "
                         "Do not assume or hallucinate search results.\n"
-                        "4. Formatting: Respond in a natural, friendly, conversational tone (2-3 sentences max). "
+                        "4. Completeness: When mentioning prices, always include the exact currency (e.g. USD, INR, EUR) and unit (e.g. kg, bag, tablet). "
+                        "Couple pricing with availability/quantity details if present to give a complete summary.\n"
+                        "5. Professional Insights: Provide a brief, helpful insight on the best recommendation or cheapest deal based on the data score or price.\n"
+                        "6. Formatting: Respond in a natural, friendly, professional, conversational tone (3-4 sentences max). "
                         "Return plain text only—no markdown, no bold text, no bullet points, and no tables."
                     ),
                 },

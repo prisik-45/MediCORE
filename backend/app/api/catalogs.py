@@ -98,26 +98,29 @@ def list_catalog_items(
     db: Session = Depends(get_db),
     q: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    latest_only: bool = Query(True),
     current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
     settings = get_settings()
     user_uuid = UUID(current_user["tenant_id"])
-    latest_items = (
-        select(
-            CatalogItem.supplier_id.label("supplier_id"),
-            CatalogItem.normalized_name.label("normalized_name"),
-            func.max(CatalogEmail.received_at).label("latest_received_at"),
-        )
-        .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
-        .where(CatalogItem.tenant_id == user_uuid)
-        .group_by(CatalogItem.supplier_id, CatalogItem.normalized_name)
-        .subquery()
-    )
     stmt = (
         select(CatalogItem, Supplier.name, CatalogEmail.received_at)
         .join(Supplier, Supplier.id == CatalogItem.supplier_id)
         .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
-        .join(
+    )
+    if latest_only:
+        latest_items = (
+            select(
+                CatalogItem.supplier_id.label("supplier_id"),
+                CatalogItem.normalized_name.label("normalized_name"),
+                func.max(CatalogEmail.received_at).label("latest_received_at"),
+            )
+            .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .where(CatalogItem.tenant_id == user_uuid)
+            .group_by(CatalogItem.supplier_id, CatalogItem.normalized_name)
+            .subquery()
+        )
+        stmt = stmt.join(
             latest_items,
             and_(
                 latest_items.c.supplier_id == CatalogItem.supplier_id,
@@ -125,8 +128,7 @@ def list_catalog_items(
                 latest_items.c.latest_received_at == CatalogEmail.received_at,
             ),
         )
-        .where(CatalogItem.tenant_id == user_uuid)
-    )
+    stmt = stmt.where(CatalogItem.tenant_id == user_uuid)
     if not settings.mock_data_enabled:
         source = CatalogItem.raw_payload["source"].astext
         stmt = stmt.where(or_(source.is_(None), source != "mock_extracted_catalogue"))

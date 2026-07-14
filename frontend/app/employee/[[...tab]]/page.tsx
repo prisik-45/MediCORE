@@ -688,6 +688,18 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
 
   const assistantRows = rows as Array<Record<string, unknown>>;
 
+  const latestSupplierRows = useMemo(() => {
+    const map = new Map<string, SupplierTableRow>();
+    for (const row of supplierRows) {
+      const key = `${row.supplier_name}-${row.normalized_name || row.ingredient_name}`;
+      const existing = map.get(key);
+      if (!existing || new Date(row.received_at ?? 0).getTime() > new Date(existing.received_at ?? 0).getTime()) {
+        map.set(key, row);
+      }
+    }
+    return Array.from(map.values());
+  }, [supplierRows]);
+
   const dashboardData = useMemo(() => {
     const suppliers = new Set([
       ...supplierRows.map((row) => row.supplier_name),
@@ -696,7 +708,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     const completedCatalogs = catalogEmails.filter((email) => email.processing_status === "completed").length;
 
     const itemGroups = new Map<string, SupplierTableRow[]>();
-    for (const row of supplierRows) {
+    for (const row of latestSupplierRows) {
       const key = row.normalized_name || row.ingredient_name;
       const group = itemGroups.get(key) ?? [];
       group.push(row);
@@ -727,7 +739,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       deals: deals.slice(0, 3),
       activities,
     };
-  }, [catalogEmails, inboxThreads, supplierRows]);
+  }, [catalogEmails, inboxThreads, supplierRows, latestSupplierRows]);
 
   const topDashboardDeal = dashboardData.deals[0];
 
@@ -757,12 +769,18 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
         return new Date(right.received_at).getTime() - new Date(left.received_at).getTime();
       })[0];
       const meta = supplierMeta.get(supplierName);
-      const totalQty = items.reduce((total, item) => total + item.available_qty, 0);
+      
+      const latestItems = latestEmail
+        ? items.filter((item) => item.catalog_email_id === latestEmail.id)
+        : items;
+      const sortedLatestByPrice = [...latestItems].sort((left, right) => getBasePrice(left.price_per_unit, left.currency) - getBasePrice(right.price_per_unit, right.currency));
+      const totalQty = latestItems.reduce((total, item) => total + item.available_qty, 0);
+
       return {
         supplier_name: supplierName,
         email_domain: items[0]?.email_domain ?? meta?.email_domain ?? "-",
-        item_count: items.length,
-        best_item: sortedByPrice[0],
+        item_count: latestItems.length,
+        best_item: sortedLatestByPrice[0],
         total_qty: totalQty,
         last_catalog_at: latestEmail?.received_at ?? items[0]?.valid_until ?? meta?.last_email_date ?? null,
         latest_email_id: latestEmail?.id ?? null,
@@ -774,7 +792,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       return !search
         || supplier.supplier_name.toLowerCase().includes(search)
         || supplier.email_domain.toLowerCase().includes(search)
-        || supplier.items.some((item) => item.normalized_name.toLowerCase().includes(search) || item.ingredient_name.toLowerCase().includes(search));
+        || supplier.items.some((item) => (item.normalized_name || "").toLowerCase().includes(search) || (item.ingredient_name || "").toLowerCase().includes(search));
     });
 
     return summaries.sort((left, right) => {
@@ -822,8 +840,8 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     const bestPrice = Math.min(...filteredByEmail.map((item) => item.price_per_unit));
     return filteredByEmail.filter((item) => {
       const matchesSearch = !search
-        || item.ingredient_name.toLowerCase().includes(search)
-        || item.normalized_name.toLowerCase().includes(search);
+        || (item.ingredient_name || "").toLowerCase().includes(search)
+        || (item.normalized_name || "").toLowerCase().includes(search);
       if (!matchesSearch) return false;
       if (catalogFilter === "best") return item.price_per_unit <= bestPrice * 1.08;
       if (catalogFilter === "low-stock") return item.available_qty <= minQty * 1.35;
@@ -839,10 +857,10 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
   }, [selectedCatalog, selectedCatalogEmailId]);
 
   const availableIngredients = useMemo(() => {
-    return Array.from(new Set(supplierRows.map((row) => row.normalized_name || row.ingredient_name)))
+    return Array.from(new Set(latestSupplierRows.map((row) => row.normalized_name || row.ingredient_name)))
       .filter(Boolean)
       .sort((left, right) => left.localeCompare(right));
-  }, [supplierRows]);
+  }, [latestSupplierRows]);
 
   const compareSuggestions = useMemo(() => {
     const requested = compareIngredient.trim().toLowerCase();
@@ -859,7 +877,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       return { rows: [], topRows: [], otherRows: [], ingredientLabel: "ingredient" };
     }
 
-    const matchedRows = supplierRows.filter((row) => {
+    const matchedRows = latestSupplierRows.filter((row) => {
       const normalized = (row.normalized_name || "").toLowerCase();
       const ingredient = (row.ingredient_name || "").toLowerCase();
       return !requested || normalized.includes(requested) || ingredient.includes(requested);
@@ -907,7 +925,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       otherRows: sorted.slice(3),
       ingredientLabel: sorted[0]?.normalized_name || selectedCompareIngredient || "ingredient",
     };
-  }, [compareSort, selectedCompareIngredient, supplierRows]);
+  }, [compareSort, selectedCompareIngredient, latestSupplierRows]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1106,7 +1124,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       try {
         const [suppliersRes, itemsRes, emailsRes] = await Promise.all([
           authFetch(`${apiBaseUrl}/api/suppliers`),
-          authFetch(`${apiBaseUrl}/api/catalogs/items?limit=200`),
+          authFetch(`${apiBaseUrl}/api/catalogs/items?limit=200&latest_only=false`),
           authFetch(`${apiBaseUrl}/api/catalogs/emails?limit=50`),
         ]);
 
@@ -1662,6 +1680,13 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
           from { opacity: 0; transform: translateY(-8px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+          animation: spin 1s linear infinite;
+          display: inline-block;
+        }
       `}</style>
 
       {/* Navbar */}
@@ -2094,9 +2119,32 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
             <>
               <div className="inbox-layout">
                 <aside className="inbox-list-panel">
-                  <div className="inbox-panel-header">
-                    <div>
+                  <div className="inbox-panel-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <h2>Inbox</h2>
+                      <button
+                        type="button"
+                        onClick={handleSyncRealtimeEmails}
+                        disabled={isSyncingEmails}
+                        className="refresh-inbox-button"
+                        title="Sync/Refresh Inbox"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: isSyncingEmails ? "not-allowed" : "pointer",
+                          color: "var(--accent)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: "4px",
+                          borderRadius: "4px",
+                          transition: "background 0.2s, transform 0.2s",
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(15, 122, 95, 0.08)"}
+                        onMouseOut={(e) => e.currentTarget.style.background = "none"}
+                      >
+                        <RefreshCw size={16} className={isSyncingEmails ? "animate-spin" : ""} />
+                      </button>
                     </div>
                     <span className="inbox-count">{inboxThreads.length}</span>
                   </div>

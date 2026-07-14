@@ -43,6 +43,17 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
             await websocket.send_json({"type": "error", "message": f"Authentication failed. Connection closed. Details: {str(e)}"})
             await websocket.close()
             return
+    else:
+        logger.warning("WebSocket connection attempt without a valid token format rejected")
+        await websocket.send_json({"type": "error", "message": "Authentication failed. Missing or invalid token format. Connection closed."})
+        await websocket.close()
+        return
+
+    if not tenant_id or not user_id:
+        logger.warning("WebSocket connection attempt failed authentication (tenant_id/user_id could not be resolved) rejected")
+        await websocket.send_json({"type": "error", "message": "Authentication failed. Missing profile identity. Connection closed."})
+        await websocket.close()
+        return
 
     settings = get_settings()
     cache = Redis.from_url(settings.redis_url, decode_responses=True)
