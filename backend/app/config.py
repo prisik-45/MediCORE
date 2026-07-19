@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,25 @@ class Settings(BaseSettings):
     smtp_password: str = Field(default="", repr=False)
     smtp_sender: str = "medicore.ai@gmail.com"
     superadmin_email_id: str = "prisik.da45@gmail.com"
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.environment.lower() != "production":
+            return self
+
+        missing: list[str] = []
+        if self.supabase_service_role_key in {"", "replace-me"}:
+            missing.append("SUPABASE_SERVICE_ROLE_KEY")
+        if self.groq_api_key in {"", "replace-me"}:
+            missing.append("GROQ_API_KEY")
+        if not self.gmail_webhook_token:
+            missing.append("GMAIL_WEBHOOK_TOKEN")
+        if self.frontend_origin.startswith("http://"):
+            missing.append("FRONTEND_ORIGIN must use https:// in production")
+
+        if missing:
+            raise ValueError("Invalid production configuration: " + ", ".join(missing))
+        return self
 
 
 

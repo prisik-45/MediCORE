@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import Select, and_, asc, func, select
+from sqlalchemy import Select, and_, func, nullslast, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import CatalogItem, Supplier
@@ -39,7 +39,7 @@ class SupplierRanker:
                     latest_items.c.latest_received_at == CatalogEmail.received_at,
                 ),
             )
-            .order_by(asc(CatalogItem.price_per_unit))
+            .order_by(nullslast(CatalogItem.price_per_unit.asc()))
             .limit(plan.limit)
         )
         if not settings.mock_data_enabled:
@@ -52,7 +52,13 @@ class SupplierRanker:
         if tenant_id:
             stmt = stmt.where(CatalogItem.tenant_id == (UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id))
         if plan.normalized_name:
-            stmt = stmt.where(CatalogItem.normalized_name.ilike(f"%{plan.normalized_name.lower()}%"))
+            search_term = plan.normalized_name.lower()
+            stmt = stmt.where(
+                or_(
+                    CatalogItem.normalized_name.ilike(f"%{search_term}%"),
+                    CatalogItem.ingredient_name.ilike(f"%{search_term}%"),
+                )
+            )
         if plan.min_quantity:
             stmt = stmt.where(CatalogItem.available_qty >= plan.min_quantity)
         if plan.unit:
@@ -60,7 +66,10 @@ class SupplierRanker:
 
         rows = []
         for item, supplier, received_at in self.db.execute(stmt):
-            score = 100.0 - (float(item.price_per_unit) / 100.0)
+            price = float(item.price_per_unit) if item.price_per_unit is not None else None
+            qty = float(item.available_qty) if item.available_qty is not None else None
+            score = 100.0 - (price / 100.0) if price is not None else 0.0
+            raw_payload = item.raw_payload or {}
             rows.append(
                 {
                     "supplier_name": supplier.name,
@@ -68,10 +77,14 @@ class SupplierRanker:
                     "certifications": supplier.certifications,
                     "ingredient_name": item.ingredient_name,
                     "normalized_name": item.normalized_name,
-                    "price_per_unit": float(item.price_per_unit),
+                    "price_per_unit": price,
                     "currency": item.currency,
-                    "available_qty": float(item.available_qty),
+                    "available_qty": qty,
                     "unit": item.unit,
+                    "price_display": raw_payload.get("price_display"),
+                    "quantity_display": raw_payload.get("quantity_display"),
+                    "lead_time_text": raw_payload.get("lead_time_text"),
+                    "moq_display": raw_payload.get("moq_display"),
                     "valid_until": item.valid_until.isoformat() if item.valid_until else None,
                     "received_at": received_at.isoformat() if received_at else None,
                     "recommendation_score": round(score, 4),

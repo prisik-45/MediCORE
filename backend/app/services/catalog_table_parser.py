@@ -120,6 +120,12 @@ def _normalize_name(name: str) -> str:
 
 def _normalize_unit(unit: str) -> str:
     unit = unit.lower().strip()
+    if unit in {"kgs", "kilogram", "kilograms"}:
+        return "kg"
+    if unit in {"litre", "liter", "litres", "liters"}:
+        return "l"
+    if unit in {"packs", "pack"}:
+        return "pack"
     if unit in {"units", "unit"}:
         return "unit"
     if unit in {"tabs", "tab", "tablets", "tablet"}:
@@ -196,6 +202,7 @@ def _parse_quotation_row(line: str, context: dict[str, str | None]) -> Extracted
         available_qty=qty,
         unit=qty_unit or price_unit,
         lead_time_days=_lead_time_days(lead_text),
+        lead_time_text=lead_text or None,
         moq=moq,
         notes=notes,
     )
@@ -229,11 +236,15 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
             continue
 
         price = _number_from_text(_cell(parts, header_map.get("price")))
-        if price is None:
-            continue
 
-        qty = _number_from_text(_cell(parts, header_map.get("qty"))) if "qty" in header_map else None
-        unit = _normalize_unit(_cell(parts, header_map.get("unit")) or context.get("quantity_unit") or "units")
+        raw_qty = _cell(parts, header_map.get("qty"))
+        qty = _number_from_text(raw_qty) if "qty" in header_map else None
+        unit = _normalize_unit(
+            _cell(parts, header_map.get("unit"))
+            or _unit_from_text(raw_qty)
+            or context.get("quantity_unit")
+            or "units"
+        )
         currency = _currency_code(
             _cell(parts, header_map.get("currency"))
             or _currency_from_text(_cell(parts, header_map.get("price")))
@@ -249,6 +260,11 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
         raw_price = _cell(parts, header_map.get("price"))
         if raw_price:
             notes_parts.append(f"original_price={raw_price}")
+        if raw_qty:
+            notes_parts.append(f"original_quantity={raw_qty}")
+        raw_lead_time = _cell(parts, header_map.get("lead_time"))
+        if raw_lead_time:
+            notes_parts.append(f"lead_time={raw_lead_time}")
 
         rows.append(
             ExtractedCatalogItem(
@@ -256,9 +272,10 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
                 normalized_name=_normalize_name(name),
                 price_per_unit=price,
                 currency=currency,
-                available_qty=qty or 0.0,
+                available_qty=qty,
                 unit=unit,
                 lead_time_days=lead_time_days,
+                lead_time_text=raw_lead_time or None,
                 moq=moq,
                 notes="; ".join(notes_parts) if notes_parts else None,
             )
@@ -340,6 +357,13 @@ def _number_from_text(raw: str | None) -> float | None:
     return _number(match.group(0)) if match else None
 
 
+def _unit_from_text(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    match = re.search(r"\d[\d,]*(?:\.\d+)?\s*(kg|kgs|g|mg|ml|l|litre|liter|units?|tabs?|tablets?|capsules?|packs?)\b", raw, flags=re.IGNORECASE)
+    return _normalize_unit(match.group(1)) if match else None
+
+
 def _extract_moq(text: str) -> tuple[float | None, str | None]:
     match = MOQ_PATTERN.search(text or "")
     if not match:
@@ -349,6 +373,8 @@ def _extract_moq(text: str) -> tuple[float | None, str | None]:
 
 def _lead_time_days(text: str) -> int | None:
     if not text:
+        return None
+    if re.search(r"\d+\s*(?:-|–|to)\s*\d+", text, flags=re.IGNORECASE):
         return None
     match = re.search(r"(\d+)", text)
     return int(match.group(1)) if match else None
@@ -396,7 +422,7 @@ def _item_key(item: ExtractedCatalogItem) -> tuple[str, float, float, str]:
     return (
         item.normalized_name or item.ingredient_name.lower(),
         float(item.available_qty or 0),
-        float(item.price_per_unit),
+        float(item.price_per_unit or 0),
         item.currency,
     )
 

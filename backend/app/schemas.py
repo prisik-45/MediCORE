@@ -8,41 +8,64 @@ from pydantic import BaseModel, Field, field_validator
 class ExtractedCatalogItem(BaseModel):
     ingredient_name: str
     normalized_name: str | None = None
-    price_per_unit: float
+    price_per_unit: float | None = None
     currency: str = "INR"
-    available_qty: float | None = 0.0
-    unit: str | None = "units"
+    available_qty: float | None = None
+    unit: str | None = None
     valid_until: datetime | None = None
     supplier_sku: str | None = None
     lead_time_days: int | None = None
+    lead_time_text: str | None = None
     moq: float | None = None
     notes: str | None = None
+
+    @field_validator("price_per_unit", mode="before")
+    @classmethod
+    def validate_price_per_unit(cls, v):
+        if isinstance(v, bool):
+            raise ValueError("price_per_unit cannot be boolean")
+        if v is None or str(v).strip().lower() in {"", "na", "n/a", "none", "null", "-"}:
+            return None
+        return v
 
     @field_validator("available_qty", mode="before")
     @classmethod
     def validate_available_qty(cls, v):
-        if v is None:
-            return 0.0
+        if isinstance(v, bool):
+            return None
+        if v is None or str(v).strip().lower() in {"", "na", "n/a", "none", "null", "-"}:
+            return None
         try:
             return float(v)
         except (ValueError, TypeError):
-            return 0.0
+            return None
 
     @field_validator("moq", mode="before")
     @classmethod
     def validate_moq(cls, v):
+        if isinstance(v, bool):
+            return None
         if v is None:
             return None
         try:
             return float(v)
         except (ValueError, TypeError):
             return None
+
+    @field_validator("lead_time_days", mode="before")
+    @classmethod
+    def validate_lead_time_days(cls, v):
+        if isinstance(v, bool) or v in {"", "na", "n/a", "none", "null", "-"}:
+            return None
+        if isinstance(v, str) and any(token in v.lower() for token in ("-", "to", "–")):
+            return None
+        return v
 
     @field_validator("unit", mode="before")
     @classmethod
     def validate_unit(cls, v):
         if v is None or not str(v).strip():
-            return "units"
+            return None
         return str(v)
 
 

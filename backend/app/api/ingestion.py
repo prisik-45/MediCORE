@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.db import get_db
 from backend.app.services.email_ingestion import EmailIngestionService
 from backend.app.tasks import poll_inbox
-from backend.app.auth import get_current_user
+from backend.app.auth import get_current_admin, get_current_user
 
 router = APIRouter()
 
@@ -17,12 +17,19 @@ class ImapCredentials(BaseModel):
 
 
 @router.get("/imap-preview")
-def imap_preview(db: Session = Depends(get_db)) -> dict:
+def imap_preview(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin),
+) -> dict:
     return EmailIngestionService(db).preview_imap_inbox()
 
 
 @router.post("/imap-preview-with-credentials")
-def imap_preview_with_credentials(payload: ImapCredentials, db: Session = Depends(get_db)) -> dict:
+def imap_preview_with_credentials(
+    payload: ImapCredentials,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
     return EmailIngestionService(db).preview_imap_inbox(
         imap_username=payload.email,
         imap_password=payload.app_password,
@@ -31,40 +38,59 @@ def imap_preview_with_credentials(payload: ImapCredentials, db: Session = Depend
 
 
 @router.post("/poll-now")
-def poll_now() -> dict[str, str]:
+def poll_now(current_user: dict = Depends(get_current_admin)) -> dict[str, str]:
     task = poll_inbox.delay()
     return {"status": "queued", "task_id": task.id}
 
 
 @router.post("/poll-now-sync")
-def poll_now_sync(db: Session = Depends(get_db)) -> dict[str, int]:
+def poll_now_sync(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin),
+) -> dict[str, int]:
     processed = EmailIngestionService(db).poll_imap_inbox()
     return {"processed": processed}
 
 
 @router.post("/poll-now-sync-user")
 def poll_now_sync_user(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
-) -> dict[str, int]:
+) -> dict[str, int | str]:
     from uuid import UUID
-    from backend.app.models import EmailAccount
+    import json
+    from backend.app.models import EmailAccount, EmailSyncSetting
+    from backend.app.tasks import poll_email_account
     user_uuid = UUID(current_user["id"])
     accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
-    
-    total_processed = 0
-    service = EmailIngestionService(db)
+
+    queued_accounts = 0
     for account in accounts:
         try:
-            total_processed += service.poll_account_inbox(account.id)
+            poll_email_account.delay(str(account.id))
+            queued_accounts += 1
         except Exception:
-            pass
-            
-    return {"processed": total_processed}
+            background_tasks.add_task(poll_email_account, str(account.id))
+            queued_accounts += 1
+
+    sync_setting = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
+    pending_count = 0
+    if sync_setting:
+        try:
+            pending_count = len(json.loads(sync_setting.pending_approvals or "[]"))
+        except Exception:
+            pending_count = 0
+
+    return {"status": "queued", "queued_accounts": queued_accounts, "processed": 0, "pending_approvals": pending_count}
 
 
 @router.post("/poll-now-sync-with-credentials")
-def poll_now_sync_with_credentials(payload: ImapCredentials, db: Session = Depends(get_db)) -> dict[str, int]:
+def poll_now_sync_with_credentials(
+    payload: ImapCredentials,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, int]:
     processed = EmailIngestionService(db).poll_imap_inbox(
         imap_username=payload.email,
         imap_password=payload.app_password,
@@ -77,10 +103,11 @@ def poll_now_sync_with_credentials(payload: ImapCredentials, db: Session = Depen
 def reprocess_empty(
     db: Session = Depends(get_db),
     force: bool = Query(False),
+    current_user: dict = Depends(get_current_admin),
 ) -> dict:
     try:
         processed = EmailIngestionService(db).reprocess_empty_catalog_emails(force=force)
         return {"processed": processed, "error": None}
-    except Exception as exc:
+    except Exception:
         db.rollback()
-        return {"processed": 0, "error": str(exc)}
+        return {"processed": 0, "error": "Reprocessing failed."}

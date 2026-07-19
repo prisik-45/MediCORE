@@ -8,6 +8,7 @@ from backend.app.auth import get_current_superadmin
 from backend.app.models import Profile, CatalogEmail, AIQueryLog
 from backend.app.services.email_sender import send_smtp_email
 from backend.app.config import get_settings
+from backend.app.security import escape_html
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,11 +43,13 @@ def approve_workspace(id: str, background_tasks: BackgroundTasks, db: Session = 
     admin_email = db.execute(text("SELECT email FROM auth.users WHERE id = :id"), {"id": id}).scalar()
     if admin_email:
         # Send approval notification email
+        safe_full_name = escape_html(profile.full_name)
+        safe_organisation = escape_html(profile.organisation)
         email_html = f"""
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#17211c;max-width:500px;margin:0 auto;padding:24px;border:1px solid #dce4df;border-radius:12px;">
           <h2 style="color:#0f7a5f;margin:0 0 16px 0;">Workspace Approved!</h2>
-          <p>Hi {profile.full_name},</p>
-          <p>Good news! Your workspace registration for <strong>{profile.organisation}</strong> has been approved by the MediCORE Superadmin.</p>
+          <p>Hi {safe_full_name},</p>
+          <p>Good news! Your workspace registration for <strong>{safe_organisation}</strong> has been approved by the MediCORE Superadmin.</p>
           <p>You can now log in to your dashboard and begin managing your suppliers.</p>
           <p style="margin:24px 0;">
             <a href="{settings.frontend_origin}/login" style="background-color:#0f7a5f;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:600;display:inline-block;">Log In to MediCORE</a>

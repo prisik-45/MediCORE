@@ -110,6 +110,31 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
   const [approvalsSearch, setApprovalsSearch] = useState("");
   const [directorySearch, setDirectorySearch] = useState("");
 
+  const getApiUrl = () => {
+    const isLocal = window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "0.0.0.0" ||
+      window.location.hostname.startsWith("192.168.") ||
+      window.location.hostname.startsWith("10.") ||
+      window.location.hostname.startsWith("172.");
+    const targetHost = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+    return isLocal ? `${window.location.protocol}//${targetHost}:8000` : "https://backend-production-b29e.up.railway.app";
+  };
+
+  const verifySuperadminProfile = async (accessToken: string) => {
+    const response = await fetch(`${getApiUrl()}/api/profile`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      throw new Error("Unable to verify superadmin profile.");
+    }
+    const profile = await response.json();
+    if (profile.role !== "superadmin") {
+      throw new Error("Access denied. Superadmin credentials required.");
+    }
+    return profile;
+  };
+
   // Sync route param on initial mount / page load or popstate
   useEffect(() => {
     if (resolvedParams?.tab) {
@@ -140,24 +165,23 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
 
   // Verify Session & Role
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
         setIsAuthorized(false);
         setSessionLoading(false);
         return;
       }
 
-      const role = session.user.user_metadata?.role;
-      if (role !== "superadmin") {
+      try {
+        const profile = await verifySuperadminProfile(session.access_token);
+        setSuperadminName(profile.full_name || session.user.email?.split("@")[0] || "Superadmin");
+        setSuperadminEmail(profile.email || session.user.email || "");
+        setIsAuthorized(true);
+      } catch {
         setIsAuthorized(false);
+      } finally {
         setSessionLoading(false);
-        return;
       }
-
-      setSuperadminName("Tarkshy");
-      setSuperadminEmail(session.user.email || "");
-      setIsAuthorized(true);
-      setSessionLoading(false);
     });
   }, [router]);
 
@@ -178,17 +202,17 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
         return;
       }
 
-      const role = data.user?.user_metadata?.role;
-      if (role !== "superadmin") {
+      try {
+        const profile = await verifySuperadminProfile(data.session?.access_token || "");
+        setSuperadminName(profile.full_name || data.user?.email?.split("@")[0] || "Superadmin");
+        setSuperadminEmail(profile.email || data.user?.email || "");
+        setIsAuthorized(true);
+      } catch {
         await supabase.auth.signOut();
         setLoginError("Access denied. Superadmin credentials required.");
         setLoginLoading(false);
         return;
       }
-
-      setSuperadminName("Tarkshy");
-      setSuperadminEmail(data.user?.email || "");
-      setIsAuthorized(true);
     } catch (err: any) {
       setLoginError(err.message || "An unexpected error occurred.");
     } finally {
@@ -209,17 +233,6 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
   }, [sidebarCollapsed]);
 
   // Fetch Logic
-  const getApiUrl = () => {
-    const isLocal = window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "0.0.0.0" ||
-      window.location.hostname.startsWith("192.168.") ||
-      window.location.hostname.startsWith("10.") ||
-      window.location.hostname.startsWith("172.");
-    const targetHost = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
-    return isLocal ? `${window.location.protocol}//${targetHost}:8000` : "https://backend-production-b29e.up.railway.app";
-  };
-
   const fetchWithAuth = async (endpoint: string, options: RequestInit = {}) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error("No active session found.");

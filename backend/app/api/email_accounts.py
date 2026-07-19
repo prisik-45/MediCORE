@@ -3,11 +3,12 @@ import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from backend.app.db import get_db
 from backend.app.auth import get_current_user, encrypt_password
 from backend.app.models import EmailAccount, EmailFilter
+from backend.app.security import validate_public_network_host
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -16,10 +17,22 @@ logger = logging.getLogger(__name__)
 
 class IMAPTestRequest(BaseModel):
     provider: str = Field(..., description="E.g., Gmail, Outlook, Custom")
-    email_address: str = Field(..., description="The full email address")
+    email_address: EmailStr = Field(..., description="The full email address")
     imap_host: str = Field(..., description="IMAP server host")
-    imap_port: int = Field(993, description="IMAP port, usually 993 for SSL")
-    password: str = Field(..., description="Email password or App-specific password")
+    imap_port: int = Field(993, ge=1, le=65535, description="IMAP SSL port")
+    password: str = Field(..., min_length=1, description="Email password or App-specific password")
+
+    @field_validator("imap_host")
+    @classmethod
+    def validate_imap_host(cls, value: str) -> str:
+        return validate_public_network_host(value, field_name="imap_host")
+
+    @field_validator("imap_port")
+    @classmethod
+    def validate_imap_port(cls, value: int) -> int:
+        if value != 993:
+            raise ValueError("Only IMAP over SSL on port 993 is supported.")
+        return value
 
 class IMAPTestResponse(BaseModel):
     success: bool
@@ -33,21 +46,45 @@ class EmailFilterCreate(BaseModel):
 
 class EmailAccountCreate(BaseModel):
     provider: str
-    email_address: str
+    email_address: EmailStr
     imap_host: str
-    imap_port: int
-    password: str
+    imap_port: int = Field(993, ge=1, le=65535)
+    password: str = Field(..., min_length=1)
     filters: EmailFilterCreate | None = None
     ingestion_approach: str | None = None
 
+    @field_validator("imap_host")
+    @classmethod
+    def validate_imap_host(cls, value: str) -> str:
+        return validate_public_network_host(value, field_name="imap_host")
+
+    @field_validator("imap_port")
+    @classmethod
+    def validate_imap_port(cls, value: int) -> int:
+        if value != 993:
+            raise ValueError("Only IMAP over SSL on port 993 is supported.")
+        return value
+
 class EmailAccountUpdate(BaseModel):
     provider: str
-    email_address: str
+    email_address: EmailStr
     imap_host: str
-    imap_port: int
-    password: str | None = None  # optional, if omitted we keep existing password
+    imap_port: int = Field(993, ge=1, le=65535)
+    password: str | None = Field(default=None, min_length=1)  # optional, if omitted we keep existing password
     filters: EmailFilterCreate | None = None
     ingestion_approach: str | None = None
+
+    @field_validator("imap_host")
+    @classmethod
+    def validate_imap_host(cls, value: str) -> str:
+        return validate_public_network_host(value, field_name="imap_host")
+
+    @field_validator("imap_port")
+    @classmethod
+    def validate_imap_port(cls, value: int) -> int:
+        if value != 993:
+            raise ValueError("Only IMAP over SSL on port 993 is supported.")
+        return value
 
 class EmailFilterResponse(BaseModel):
     id: UUID
@@ -90,7 +127,7 @@ class EmailSyncSettingResponse(BaseModel):
         from_attributes = True
 
 class EmailSyncSettingUpdate(BaseModel):
-    poll_interval_minutes: int
+    poll_interval_minutes: int = Field(15, ge=5, le=1440)
     auto_extract_catalog: bool
     notify_on_new_catalog: bool
     ingestion_approach: str
@@ -108,19 +145,21 @@ def verify_imap_credentials(host: str, port: int, email_address: str, password: 
             # Use SSL
             mail = imaplib.IMAP4_SSL(host, port, timeout=10)
         else:
-            # Plain IMAP
-            mail = imaplib.IMAP4(host, port, timeout=10)
+            return False, "Only IMAP over SSL on port 993 is supported."
         
         try:
             mail.login(email_address, password)
             mail.logout()
             return True, "IMAP connection and login verified successfully."
         except imaplib.IMAP4.error as e:
-            return False, f"IMAP authentication failed: {str(e)}"
+            logger.info("IMAP authentication failed for %s on %s:%s: %s", email_address, host, port, e)
+            return False, "IMAP authentication failed."
         except Exception as e:
-            return False, f"IMAP login error: {str(e)}"
+            logger.warning("IMAP login error for %s on %s:%s: %s", email_address, host, port, e)
+            return False, "IMAP login error."
     except Exception as e:
-        return False, f"Could not connect to the IMAP server: {str(e)}"
+        logger.warning("Could not connect to IMAP server %s:%s: %s", host, port, e)
+        return False, "Could not connect to the IMAP server."
 
 # --- Endpoints ---
 
@@ -199,7 +238,7 @@ def save_email_account(
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot save: credential validation failed. Details: {message}"
+            detail=f"Cannot save: credential validation failed. {message}"
         )
 
     # 2. Encrypt password securely using Fernet
@@ -289,7 +328,7 @@ def save_email_account(
         logger.error(f"Error saving email account: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while saving the email account: {str(e)}"
+            detail="An error occurred while saving the email account."
         )
 
 @router.get("/sync-settings", response_model=EmailSyncSettingResponse)
@@ -339,6 +378,7 @@ def update_sync_settings(
     if not settings_row:
         settings_row = EmailSyncSetting(
             user_id=user_uuid,
+            poll_interval_minutes=15,
             ingestion_approach="approach_1",
             trusted_suppliers="",
             keyword_filters="catalog, catalogue, price, offer, quote",
@@ -373,7 +413,7 @@ def update_sync_settings(
         logger.error(f"Error updating sync settings: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while updating sync settings: {str(e)}"
+            detail="An error occurred while updating sync settings."
         )
 
 @router.put("/{account_id}", response_model=EmailAccountResponse)
@@ -399,10 +439,10 @@ def update_email_account(
     else:
         try:
             active_password = decrypt_password(account.encrypted_password)
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Unable to decrypt existing password for verification: {str(e)}"
+                detail="Unable to decrypt existing password for verification."
             )
 
     # 2. Test Connection
@@ -499,7 +539,7 @@ def update_email_account(
         logger.error(f"Error updating email account: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while updating the email account: {str(e)}"
+            detail="An error occurred while updating the email account."
         )
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -526,7 +566,7 @@ def delete_email_account(
         logger.error(f"Error deleting email account: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while deleting the email account: {str(e)}"
+            detail="An error occurred while deleting the email account."
         )
 
 @router.post("/{account_id}/sync", response_model=EmailAccountResponse)
@@ -589,7 +629,7 @@ def trigger_sync_now(
         logger.error(f"Error queueing sync task: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while queueing sync: {str(e)}"
+            detail="An error occurred while queueing sync."
         )
 
 
