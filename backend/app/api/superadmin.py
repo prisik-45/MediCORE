@@ -143,21 +143,22 @@ def get_global_analytics(db: Session = Depends(get_db), current_user: dict = Dep
 
 @router.get("/telemetry")
 def get_engine_telemetry(current_user: dict = Depends(get_current_superadmin)):
-    """Retrieve Celery and Redis system telemetry."""
-    redis_status = "Offline"
+    """Retrieve Celery and Valkey system telemetry."""
+    valkey_status = "Offline"
     queue_backlog = 0
     
     try:
-        r = redis.Redis.from_url(settings.redis_url, socket_timeout=2)
+        r = redis.Redis.from_url(settings.queue_url, socket_timeout=2)
         r.ping()
-        redis_status = "Online"
+        valkey_status = "Online"
         queue_backlog = r.llen("celery") or 0
     except Exception as e:
-        logger.error(f"Failed to check Redis telemetry: {e}")
+        logger.error(f"Failed to check Valkey telemetry: {e}")
         
     return {
-        "redis_status": redis_status,
-        "celery_status": "Active" if redis_status == "Online" else "Inactive",
+        "valkey_status": valkey_status,
+        "redis_status": valkey_status,
+        "celery_status": "Active" if valkey_status == "Online" else "Inactive",
         "queue_backlog": queue_backlog,
         "avg_processing_speed": "4.2s / catalog",
         "engine_version": "v1.2.0"

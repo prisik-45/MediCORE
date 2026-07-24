@@ -1,7 +1,9 @@
 ﻿import re
 from datetime import UTC, datetime
 
-from backend.app.schemas import ExtractedCatalogItem
+from backend.app.schemas import ExtractedCatalogItem, clean_optional_text
+
+CATALOG_TABLE_PARSER_VERSION = "2026-07-22.vertical-catalog-v2"
 
 MONTHS = {
     "jan": 1,
@@ -54,6 +56,13 @@ MOQ_PATTERN = re.compile(
     r"\b(?:MOQ|M\.?O\.?Q\.?)\s*:?\s*(?P<moq>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>kg|g|mg|ml|l|units?|packs?)\b",
     re.IGNORECASE,
 )
+PRODUCT_CODE_PATTERN = re.compile(r"^[A-Z]{2,}\d{3,}[A-Z0-9-]*$")
+STANDALONE_PRICE_PATTERN = re.compile(r"^(?:US\$|\$|USD|INR|Rs\.?|₹|EUR|€)?\s*\d[\d,]*(?:\.\d+)?\s*$", re.IGNORECASE)
+FOOTER_OR_HEADER_PATTERN = re.compile(
+    r"^(?:real-time raw material|sanyuan jinrui|tel:|add:|jinrui product code|product name|"
+    r"product specification description|fob\s*\()",
+    re.IGNORECASE,
+)
 
 
 def parse_catalog_table_text(
@@ -64,6 +73,12 @@ def parse_catalog_table_text(
     seen: set[tuple[str, float, float, str]] = set()
     context = _table_context(text)
     reference_date = reference_date or datetime.now(UTC)
+    for vertical_item in _parse_vertical_catalog_rows(text, context):
+        key = _item_key(vertical_item)
+        if key not in seen:
+            seen.add(key)
+            items.append(vertical_item)
+
     for table_item in _parse_generic_table(text, context):
         key = _item_key(table_item)
         if key not in seen:
@@ -101,6 +116,71 @@ def parse_catalog_table_text(
             seen.add(_item_key(quote_item))
             items.append(quote_item)
     return items
+
+
+def _parse_vertical_catalog_rows(
+    text: str,
+    context: dict[str, str | None],
+) -> list[ExtractedCatalogItem]:
+    rows: list[ExtractedCatalogItem] = []
+    lines = [_clean_line(line) for line in text.splitlines() if _clean_line(line)]
+    price_unit = _price_unit_context(lines) or context.get("quantity_unit") or "kg"
+    currency = _vertical_currency_context(lines) or context.get("currency") or "USD"
+
+    index = 0
+    while index < len(lines):
+        sku = lines[index]
+        if not PRODUCT_CODE_PATTERN.match(sku):
+            index += 1
+            continue
+
+        name_index = index + 1
+        if name_index >= len(lines):
+            break
+        product_name = lines[name_index]
+        if _looks_like_header(product_name) or FOOTER_OR_HEADER_PATTERN.search(product_name):
+            index += 1
+            continue
+
+        spec_parts: list[str] = []
+        price_text: str | None = None
+        cursor = name_index + 1
+        while cursor < len(lines):
+            line = lines[cursor]
+            if PRODUCT_CODE_PATTERN.match(line):
+                break
+            if STANDALONE_PRICE_PATTERN.match(line):
+                price_text = line
+                cursor += 1
+                break
+            if not FOOTER_OR_HEADER_PATTERN.search(line):
+                spec_parts.append(line)
+            cursor += 1
+
+        price = _number_from_text(price_text)
+        if price is not None:
+            raw_price = _format_original_price(price_text or str(price), currency, price_unit)
+            source = " ".join([sku, product_name, *spec_parts, price_text or str(price)])
+            notes = _notes(
+                supplier_sku=sku,
+                specification=" ".join(spec_parts).replace(";", ",") if spec_parts else None,
+                original_price=raw_price,
+                source=source[:500].replace(";", ","),
+            )
+            rows.append(
+                ExtractedCatalogItem(
+                    ingredient_name=product_name,
+                    normalized_name=_normalize_name(product_name),
+                    price_per_unit=price,
+                    currency=currency,
+                    available_qty=None,
+                    unit=price_unit,
+                    notes=notes,
+                )
+            )
+
+        index = max(cursor, index + 1)
+    return rows
 
 
 def extract_pack_size(line: str) -> str | None:
@@ -243,7 +323,7 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
             _cell(parts, header_map.get("unit"))
             or _unit_from_text(raw_qty)
             or context.get("quantity_unit")
-            or "units"
+            or ""
         )
         currency = _currency_code(
             _cell(parts, header_map.get("currency"))
@@ -254,15 +334,16 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
         moq = _number_from_text(_cell(parts, header_map.get("moq"))) if "moq" in header_map else None
         lead_time_days = _lead_time_days(_cell(parts, header_map.get("lead_time")))
         notes_parts = []
-        pack = _cell(parts, header_map.get("pack"))
+        pack = clean_optional_text(_cell(parts, header_map.get("pack")))
         if pack:
             notes_parts.append(f"packaging={pack}")
-        raw_price = _cell(parts, header_map.get("price"))
+        raw_price = clean_optional_text(_cell(parts, header_map.get("price")))
         if raw_price:
             notes_parts.append(f"original_price={raw_price}")
-        if raw_qty:
-            notes_parts.append(f"original_quantity={raw_qty}")
-        raw_lead_time = _cell(parts, header_map.get("lead_time"))
+        raw_qty_note = clean_optional_text(raw_qty)
+        if raw_qty_note:
+            notes_parts.append(f"original_quantity={raw_qty_note}")
+        raw_lead_time = clean_optional_text(_cell(parts, header_map.get("lead_time")))
         if raw_lead_time:
             notes_parts.append(f"lead_time={raw_lead_time}")
 
@@ -275,7 +356,7 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
                 available_qty=qty,
                 unit=unit,
                 lead_time_days=lead_time_days,
-                lead_time_text=raw_lead_time or None,
+                lead_time_text=raw_lead_time,
                 moq=moq,
                 notes="; ".join(notes_parts) if notes_parts else None,
             )
@@ -335,8 +416,39 @@ def _currency_code(raw: str | None) -> str:
 def _currency_from_text(raw: str | None) -> str | None:
     if not raw:
         return None
-    match = re.search(r"(US\$|\$|USD|INR|Rs\.?|₹|EUR|€)", raw, flags=re.IGNORECASE)
+    match = re.search(r"(US\$|\$|₹|€|(?<![A-Z])(?:USD|INR|EUR|Rs\.?)(?![A-Z]))", raw, flags=re.IGNORECASE)
     return match.group(1) if match else None
+
+
+def _vertical_currency_context(lines: list[str]) -> str | None:
+    for line in lines[:30]:
+        detected = _currency_from_text(line)
+        if detected:
+            return _currency_code(detected)
+    return None
+
+
+def _price_unit_context(lines: list[str]) -> str | None:
+    for line in lines[:30]:
+        match = re.search(r"/\s*(kg|g|mg|ml|l|litre|liter|units?|tabs?|tablets?|capsules?|packs?)\b", line, flags=re.IGNORECASE)
+        if match:
+            return _normalize_unit(match.group(1))
+    return None
+
+
+def _format_original_price(price_text: str, currency: str, price_unit: str) -> str:
+    cleaned_price = (price_text or "").strip()
+    if _currency_from_text(cleaned_price):
+        prefix = ""
+    elif currency == "USD":
+        prefix = "$"
+    elif currency == "INR":
+        prefix = "INR "
+    elif currency == "EUR":
+        prefix = "EUR "
+    else:
+        prefix = f"{currency} "
+    return f"{prefix}{cleaned_price}/{price_unit}".strip()
 
 
 def _number(raw: str | None) -> float | None:
@@ -349,9 +461,7 @@ def _number(raw: str | None) -> float | None:
 
 
 def _number_from_text(raw: str | None) -> float | None:
-    if not raw:
-        return None
-    if raw.strip().lower() in {"na", "n/a", "-"}:
+    if not clean_optional_text(raw):
         return None
     match = re.search(r"\d[\d,]*(?:\.\d+)?", raw)
     return _number(match.group(0)) if match else None

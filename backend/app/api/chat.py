@@ -56,7 +56,7 @@ async def chat_socket(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         return
 
     settings = get_settings()
-    cache = Redis.from_url(settings.redis_url, decode_responses=True)
+    cache = Redis.from_url(settings.queue_url, decode_responses=True)
     engine = NaturalLanguageQueryEngine(db=db, cache=cache)
 
     try:

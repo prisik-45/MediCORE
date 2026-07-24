@@ -66,6 +66,7 @@ interface GlobalAnalytics {
 }
 
 interface Telemetry {
+  valkey_status?: string;
   redis_status: string;
   celery_status: string;
   queue_backlog: number;
@@ -109,6 +110,8 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
   // Search states
   const [approvalsSearch, setApprovalsSearch] = useState("");
   const [directorySearch, setDirectorySearch] = useState("");
+
+  const getQueueStatus = () => telemetry?.valkey_status || telemetry?.redis_status || "Offline";
 
   const getApiUrl = () => {
     const isLocal = window.location.hostname === "localhost" ||
@@ -471,19 +474,19 @@ export default function SuperadminWorkspacePage({ params }: { params: Promise<{ 
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: "12px", borderBottom: "1px solid var(--line)" }}>
-                    <span style={{ fontSize: "13.5px", color: "var(--muted)" }}>Redis Broker Connection</span>
+                    <span style={{ fontSize: "13.5px", color: "var(--muted)" }}>Valkey Broker Connection</span>
                     <span style={{
                       fontSize: "12px",
                       fontWeight: 700,
                       padding: "4px 12px",
                       borderRadius: "12px",
-                      background: telemetry?.redis_status === "Online" ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)",
-                      color: telemetry?.redis_status === "Online" ? "#10b981" : "#ef4444",
+                      background: getQueueStatus() === "Online" ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)",
+                      color: getQueueStatus() === "Online" ? "#10b981" : "#ef4444",
                       display: "inline-flex",
                       alignItems: "center"
                     }}>
-                      <span className={telemetry?.redis_status === "Online" ? "pulse-dot-green" : "pulse-dot-red"}></span>
-                      {telemetry?.redis_status || "Offline"}
+                      <span className={getQueueStatus() === "Online" ? "pulse-dot-green" : "pulse-dot-red"}></span>
+                      {getQueueStatus()}
                     </span>
                   </div>
 

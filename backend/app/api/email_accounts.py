@@ -1,7 +1,7 @@
 import imaplib
 import logging
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -143,7 +143,7 @@ def verify_imap_credentials(host: str, port: int, email_address: str, password: 
         logger.info(f"Testing IMAP connection to {host}:{port} for {email_address}")
         if port == 993:
             # Use SSL
-            mail = imaplib.IMAP4_SSL(host, port, timeout=10)
+            mail = imaplib.IMAP4_SSL(host, port, timeout=5)
         else:
             return False, "Only IMAP over SSL on port 993 is supported."
         
@@ -160,6 +160,13 @@ def verify_imap_credentials(host: str, port: int, email_address: str, password: 
     except Exception as e:
         logger.warning("Could not connect to IMAP server %s:%s: %s", host, port, e)
         return False, "Could not connect to the IMAP server."
+
+
+def queue_email_account_sync(account_id: UUID) -> str:
+    from backend.app.tasks import poll_email_account
+
+    task = poll_email_account.apply_async(args=[str(account_id)], retry=False)
+    return task.id
 
 # --- Endpoints ---
 
@@ -220,7 +227,6 @@ def list_email_accounts(
 @router.post("", response_model=EmailAccountResponse)
 def save_email_account(
     request: EmailAccountCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -290,16 +296,13 @@ def save_email_account(
         db.commit()
         db.refresh(new_account)
         
-        # Trigger an immediate background sync after creation
         try:
-            from backend.app.tasks import poll_email_account
-            background_tasks.add_task(poll_email_account, str(new_account.id))
-            try:
-                poll_email_account.delay(str(new_account.id))
-            except Exception:
-                pass
+            queue_email_account_sync(new_account.id)
+            new_account.sync_status = "pending"
+            db.commit()
+            db.refresh(new_account)
         except Exception as e:
-            logger.error(f"Failed to queue immediate sync for new account {new_account.id}: {e}")
+            logger.warning("Email account saved, but immediate sync queueing failed for %s: %s", new_account.id, e)
         
         return EmailAccountResponse(
             id=new_account.id,
@@ -367,7 +370,6 @@ def get_sync_settings(
 @router.put("/sync-settings", response_model=EmailSyncSettingResponse)
 def update_sync_settings(
     request: EmailSyncSettingUpdate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -396,16 +398,6 @@ def update_sync_settings(
         settings_row.pending_approvals = request.pending_approvals
         db.commit()
         db.refresh(settings_row)
-        
-        # Trigger immediate sync for connected accounts
-        accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
-        from backend.app.tasks import poll_email_account
-        for account in accounts:
-            background_tasks.add_task(poll_email_account, str(account.id))
-            try:
-                poll_email_account.delay(str(account.id))
-            except Exception:
-                pass
 
         return settings_row
     except Exception as e:
@@ -572,11 +564,10 @@ def delete_email_account(
 @router.post("/{account_id}/sync", response_model=EmailAccountResponse)
 def trigger_sync_now(
     account_id: UUID,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Triggers an immediate IMAP sync for the specified account in a Celery background task or local background thread."""
+    """Queue an immediate IMAP sync for the specified account."""
     user_uuid = UUID(current_user["id"])
     account = db.query(EmailAccount).filter(EmailAccount.id == account_id, EmailAccount.user_id == user_uuid).first()
     if not account:
@@ -586,19 +577,7 @@ def trigger_sync_now(
         )
         
     try:
-        # Trigger Celery task, fallback to local background task if Celery/Redis is down
-        from backend.app.tasks import poll_email_account
-        celery_queued = False
-        try:
-            poll_email_account.delay(str(account.id))
-            celery_queued = True
-        except Exception as celery_err:
-            logger.warning(f"Celery queue failed ({celery_err}). Falling back to local background task.")
-            
-        if not celery_queued:
-            background_tasks.add_task(poll_email_account, str(account.id))
-        
-        # Mark sync as pending so frontend gets positive response immediately
+        queue_email_account_sync(account.id)
         account.sync_status = "pending"
         db.commit()
         db.refresh(account)
@@ -628,8 +607,8 @@ def trigger_sync_now(
     except Exception as e:
         logger.error(f"Error queueing sync task: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while queueing sync."
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email sync worker is unavailable. Start Valkey and Celery, then try again."
         )
 
 

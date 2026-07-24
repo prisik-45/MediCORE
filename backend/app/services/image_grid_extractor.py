@@ -227,9 +227,9 @@ def rows_to_catalog_table_text(rows: list[dict[str, Any]]) -> str:
                 [
                     product,
                     quantity,
-                    quantity_unit or "kg",
+                    quantity_unit,
                     price,
-                    currency or "USD",
+                    currency,
                     lead_text if re.search(r"\d", lead_text or "") else "",
                     moq,
                     pack_size,

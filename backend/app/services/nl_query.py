@@ -8,7 +8,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from backend.app.schemas import ChatResponse
-from backend.app.services.llm import GroqClient
+from backend.app.services.llm import OpenRouterClient
 from backend.app.services.query_whitelist import validate_operation
 from backend.app.services.ranking import SupplierRanker
 
@@ -17,7 +17,7 @@ class NaturalLanguageQueryEngine:
     def __init__(self, db: Session, cache: Redis) -> None:
         self.db = db
         self.cache = cache
-        self.llm = GroqClient()
+        self.llm = OpenRouterClient()
         self.ranker = SupplierRanker(db)
 
     def _answer(
@@ -26,7 +26,7 @@ class NaturalLanguageQueryEngine:
         tenant_id: Any | None = None,
         user_id: Any | None = None,
     ) -> ChatResponse:
-        cache_key = f"chat:answer:v5:{tenant_id}:{question.strip().lower()}"
+        cache_key = f"chat:answer:v9:{tenant_id}:{question.strip().lower()}"
         cached = self._cache_get(cache_key)
         if cached:
             payload = json.loads(cached)
@@ -49,6 +49,7 @@ class NaturalLanguageQueryEngine:
         plan = self._ground_plan_in_catalog(question, plan, tenant_id=tenant_id)
         self._log_query(question, tenant_id=tenant_id, user_id=user_id, operation_type=plan.operation)
         rows = self._execute_plan(plan, tenant_id=tenant_id)
+        rows = self.ranker._dedupe_supplier_item_rows(rows, plan.normalized_name)
         try:
             answer = self.llm.summarize_answer(question, rows)
         except Exception:
@@ -219,7 +220,7 @@ class NaturalLanguageQueryEngine:
         )
         lines = [
             (
-                f"Found {best.get('normalized_name') or best.get('ingredient_name')} from {best.get('supplier_name')}: "
+                f"Found {self._display_item_name(best)} from {best.get('supplier_name')}: "
                 f"{price}, {qty} available."
             ),
             "Sorted by available catalogue price.",
@@ -235,3 +236,7 @@ class NaturalLanguageQueryEngine:
                 f"Next: {next_best.get('supplier_name')} at {next_price}."
             )
         return "\n".join(lines)
+
+    def _display_item_name(self, row: dict[str, Any]) -> str:
+        name = row.get("normalized_name") or row.get("ingredient_name") or "item"
+        return f"{name} (U)" if row.get("is_updated") else str(name)

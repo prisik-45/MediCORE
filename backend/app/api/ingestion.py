@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -6,6 +6,7 @@ from backend.app.db import get_db
 from backend.app.services.email_ingestion import EmailIngestionService
 from backend.app.tasks import poll_inbox
 from backend.app.auth import get_current_admin, get_current_user
+from backend.app.api.email_accounts import queue_email_account_sync
 
 router = APIRouter()
 
@@ -54,31 +55,31 @@ def poll_now_sync(
 
 @router.post("/poll-now-sync-user")
 def poll_now_sync_user(
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ) -> dict[str, int | str]:
     from uuid import UUID
     import json
     from backend.app.models import EmailAccount, EmailSyncSetting
-    from backend.app.tasks import poll_email_account
     user_uuid = UUID(current_user["id"])
     accounts = db.query(EmailAccount).filter(EmailAccount.user_id == user_uuid).all()
 
     queued_accounts = 0
     for account in accounts:
-        try:
-            poll_email_account.delay(str(account.id))
-            queued_accounts += 1
-        except Exception:
-            background_tasks.add_task(poll_email_account, str(account.id))
-            queued_accounts += 1
+        queue_email_account_sync(account.id)
+        account.sync_status = "pending"
+        queued_accounts += 1
+    db.commit()
 
     sync_setting = db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == user_uuid).first()
     pending_count = 0
     if sync_setting:
         try:
-            pending_count = len(json.loads(sync_setting.pending_approvals or "[]"))
+            pending_items = json.loads(sync_setting.pending_approvals or "[]")
+            pending_count = len([
+                item for item in pending_items
+                if isinstance(item, dict) and not item.get("ignored")
+            ])
         except Exception:
             pending_count = 0
 

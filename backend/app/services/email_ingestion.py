@@ -19,12 +19,17 @@ from sqlalchemy.orm import Session
 from backend.app.config import get_settings
 from backend.app.db import get_supabase
 from backend.app.models import CatalogEmail, CatalogItem, Supplier
-from backend.app.services.catalog_table_parser import extract_pack_size, parse_catalog_table_text
+from backend.app.services.catalog_table_parser import (
+    CATALOG_TABLE_PARSER_VERSION,
+    extract_pack_size,
+    parse_catalog_table_text,
+)
 from backend.app.services.embeddings import embed_catalog_item_text
 from backend.app.services.gmail_api import GmailApiClient
-from backend.app.services.llm import GroqClient
+from backend.app.services.llm import OpenRouterClient
 from backend.app.services.normalizer import normalize_item
 from backend.app.services.pdf_extract import extract_pdf_text
+from backend.app.schemas import clean_optional_text
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +114,8 @@ class EmailIngestionService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.settings = get_settings()
-        self.llm = GroqClient()
+        self.llm = OpenRouterClient()
+        logger.info("MediCORE extraction engine ready: parser=%s", CATALOG_TABLE_PARSER_VERSION)
 
     def _extract_sender(self, message: Message) -> tuple[str, str]:
         from_header = message.get("From", "")
@@ -342,8 +348,12 @@ class EmailIngestionService:
                     tenant_id=tenant_id,
                     source_name=target_name,
                 )
-        catalog_email.processing_status = "completed"
-        self._touch_supplier_last_email(supplier, catalog_email.received_at)
+        if count > 0:
+            catalog_email.processing_status = "completed"
+            self._touch_supplier_last_email(supplier, catalog_email.received_at)
+        else:
+            catalog_email.processing_status = "empty"
+            logger.warning("No catalogue rows were stored for email id=%s", raw_email_id)
         self.db.commit()
         logger.info("Committed %s catalogue item(s) for email id=%s", count, raw_email_id)
         return count
@@ -437,6 +447,14 @@ class EmailIngestionService:
         parsed = self._dedupe_extracted_items(parsed)
         logger.info("OCR table parser extracted %s catalogue row(s) from %s", len(parsed), source_name)
 
+        if len(parsed) >= 20:
+            logger.info(
+                "Using %s deterministic parser row(s) for structured catalogue %s; skipping LLM fallback",
+                len(parsed),
+                source_name,
+            )
+            return parsed
+
         if not getattr(self, "llm", None):
             return parsed
 
@@ -507,31 +525,56 @@ class EmailIngestionService:
                 f"{item.normalized_name} {item.ingredient_name} "
                 f"{item.available_qty} {item.unit} {item.price_per_unit} {item.currency}"
             )
-            raw_payload = item.model_dump(mode="json")
+            raw_payload = self._compact_payload(item.model_dump(mode="json"))
             raw_payload["source"] = "email_extracted_catalogue"
-            raw_payload["source_document"] = source_name
-            raw_payload["pack_size"] = self._pack_size_for_item(text, item.ingredient_name)
-            raw_payload.update(self._notes_payload(item.notes))
-            raw_payload.update(self._exact_display_payload(item, text))
-            self.db.add(
-                CatalogItem(
-                    id=uuid4(),
-                    tenant_id=active_tenant_id,
-                    catalog_email_id=catalog_email.id,
-                    supplier_id=supplier.id,
-                    ingredient_name=item.ingredient_name,
-                    normalized_name=item.normalized_name or item.ingredient_name.lower(),
-                    price_per_unit=item.price_per_unit,
-                    currency=item.currency,
-                    available_qty=item.available_qty,
-                    unit=item.unit,
-                    valid_until=item.valid_until,
-                    lead_time_days=item.lead_time_days,
-                    moq=item.moq,
-                    embedding=self._safe_embedding(item_text),
-                    raw_payload=raw_payload,
+            if clean_optional_text(source_name):
+                raw_payload["source_document"] = clean_optional_text(source_name)
+            pack_size = clean_optional_text(self._pack_size_for_item(text, item.ingredient_name))
+            if pack_size:
+                raw_payload["pack_size"] = pack_size
+            raw_payload.update(self._compact_payload(self._notes_payload(item.notes)))
+            raw_payload.update(self._compact_payload(self._exact_display_payload(item, text)))
+            existing_item = self._single_existing_supplier_item(catalog_email, supplier, item, active_tenant_id)
+            if existing_item:
+                logger.info(
+                    "Updating existing catalogue item supplier=%s item=%s from email id=%s",
+                    supplier.email_domain,
+                    item.normalized_name or item.ingredient_name,
+                    catalog_email.raw_email_id,
                 )
-            )
+                raw_payload["is_updated"] = True
+                existing_item.catalog_email_id = catalog_email.id
+                existing_item.ingredient_name = item.ingredient_name
+                existing_item.normalized_name = item.normalized_name or item.ingredient_name.lower()
+                existing_item.price_per_unit = item.price_per_unit
+                existing_item.currency = item.currency
+                existing_item.available_qty = item.available_qty
+                existing_item.unit = item.unit
+                existing_item.valid_until = item.valid_until
+                existing_item.lead_time_days = item.lead_time_days
+                existing_item.moq = item.moq
+                existing_item.embedding = self._safe_embedding(item_text)
+                existing_item.raw_payload = raw_payload
+            else:
+                self.db.add(
+                    CatalogItem(
+                        id=uuid4(),
+                        tenant_id=active_tenant_id,
+                        catalog_email_id=catalog_email.id,
+                        supplier_id=supplier.id,
+                        ingredient_name=item.ingredient_name,
+                        normalized_name=item.normalized_name or item.ingredient_name.lower(),
+                        price_per_unit=item.price_per_unit,
+                        currency=item.currency,
+                        available_qty=item.available_qty,
+                        unit=item.unit,
+                        valid_until=item.valid_until,
+                        lead_time_days=item.lead_time_days,
+                        moq=item.moq,
+                        embedding=self._safe_embedding(item_text),
+                        raw_payload=raw_payload,
+                    )
+                )
             count += 1
         return count
 
@@ -620,6 +663,29 @@ class EmailIngestionService:
             ]
         )
 
+    def _single_existing_supplier_item(
+        self,
+        catalog_email: CatalogEmail,
+        supplier: Supplier,
+        item,
+        tenant_id: Any,
+    ) -> CatalogItem | None:
+        normalized_name = item.normalized_name or item.ingredient_name.lower()
+        previous_items = (
+            self.db.query(CatalogItem)
+            .join(CatalogEmail, CatalogEmail.id == CatalogItem.catalog_email_id)
+            .filter(
+                CatalogItem.tenant_id == tenant_id,
+                CatalogItem.supplier_id == supplier.id,
+                CatalogItem.normalized_name == normalized_name,
+                CatalogItem.catalog_email_id != catalog_email.id,
+            )
+            .order_by(CatalogEmail.received_at.desc())
+            .limit(2)
+            .all()
+        )
+        return previous_items[0] if len(previous_items) == 1 else None
+
     def _touch_supplier_last_email(self, supplier: Supplier, received_at: datetime) -> None:
         if supplier.last_email_date is None or received_at > supplier.last_email_date:
             supplier.last_email_date = received_at
@@ -645,8 +711,21 @@ class EmailIngestionService:
         for part in notes.split(";"):
             key, separator, value = part.strip().partition("=")
             if separator and key and value:
-                payload[key.strip()] = value.strip()
+                cleaned_value = clean_optional_text(value.strip().strip("'\""))
+                if cleaned_value:
+                    payload[key.strip()] = cleaned_value
         return payload
+
+    def _compact_payload(self, payload: dict) -> dict:
+        cleaned: dict = {}
+        for key, value in payload.items():
+            if isinstance(value, str):
+                cleaned_value = clean_optional_text(value)
+                if cleaned_value is not None:
+                    cleaned[key] = cleaned_value
+            elif value is not None:
+                cleaned[key] = value
+        return cleaned
 
     def _exact_display_payload(self, item, text: str) -> dict[str, str]:
         payload: dict[str, str] = {}
@@ -657,23 +736,43 @@ class EmailIngestionService:
         elif notes_payload.get("lead_time"):
             payload["lead_time_text"] = notes_payload["lead_time"]
 
-        if notes_payload.get("original_price"):
-            payload["price_display"] = notes_payload["original_price"]
-        else:
-            payload["price_display"] = self._source_number_text(text, item.ingredient_name, item.price_per_unit)
+        source_price = self._source_number_text(text, item.ingredient_name, item.price_per_unit)
+        payload["price_display"] = self._richer_display_value(notes_payload.get("original_price"), source_price)
 
+        source_quantity = self._source_number_text(text, item.ingredient_name, item.available_qty)
         if notes_payload.get("original_quantity"):
             original_quantity = notes_payload["original_quantity"]
             if item.unit and not re.search(r"[A-Za-z]", original_quantity):
-                payload["quantity_display"] = f"{original_quantity} {item.unit}"
+                note_quantity = f"{original_quantity} {item.unit}"
             else:
-                payload["quantity_display"] = original_quantity
+                note_quantity = original_quantity
+            payload["quantity_display"] = self._richer_display_value(note_quantity, source_quantity)
         else:
-            payload["quantity_display"] = self._source_number_text(text, item.ingredient_name, item.available_qty)
+            payload["quantity_display"] = source_quantity
 
         if item.moq is not None:
             payload["moq_display"] = notes_payload.get("moq") or str(item.moq)
         return {key: value for key, value in payload.items() if value}
+
+    def _richer_display_value(self, preferred: str | None, fallback: str | None) -> str | None:
+        preferred = clean_optional_text(preferred)
+        fallback = clean_optional_text(fallback)
+        if not preferred:
+            return fallback
+        if not fallback:
+            return preferred
+
+        def richness(value: str) -> int:
+            score = len(value)
+            if re.search(r"(?:USD|INR|EUR|GBP|AED|CNY|JPY|CAD|AUD|SGD|CHF|Rs\.?|₹|\$|€|£)", value, flags=re.IGNORECASE):
+                score += 30
+            if "/" in value or re.search(r"\b(?:kg|g|mg|lb|bag|drum|mt|ton)\b", value, flags=re.IGNORECASE):
+                score += 20
+            if "(" in value and ")" in value:
+                score += 10
+            return score
+
+        return fallback if richness(fallback) > richness(preferred) else preferred
 
     def _source_number_text(self, text: str, ingredient_name: str, value: Any) -> str | None:
         if value is None:
@@ -689,7 +788,18 @@ class EmailIngestionService:
             compact = line.replace(",", "")
             match = re.search(rf"(?<!\d){re.escape(exact_value)}(?:\.0+)?(?!\d)", compact)
             if match:
-                return match.group(0)
+                value_text = match.group(0)
+                display_match = re.search(
+                    rf"(?:(?:USD|INR|EUR|GBP|AED|CNY|JPY|CAD|AUD|SGD|CHF|Rs\.?|₹|\$|€|£)\s*)?"
+                    rf"{re.escape(value_text)}"
+                    rf"(?:\s*(?:/[A-Za-z][A-Za-z0-9-]*|[A-Za-z][A-Za-z0-9-]*))?"
+                    rf"(?:\s*\([A-Za-z0-9 .,/+-]+\))?",
+                    compact,
+                    flags=re.IGNORECASE,
+                )
+                if display_match:
+                    return " ".join(display_match.group(0).split())
+                return value_text
         return exact_value
 
     def _email_has_items(self, raw_email_id: str, tenant_id: Any | None = None) -> bool:
@@ -713,6 +823,21 @@ class EmailIngestionService:
         except Exception:
             logger.warning("Failed parsing Date header from email, falling back to current time")
         return datetime.now(UTC)
+
+    def _message_fingerprint(
+        self,
+        message: Message,
+        sender: str,
+        subject: str,
+        received_at: datetime | None = None,
+    ) -> str:
+        message_id = (message.get("Message-ID") or message.get("Message-Id") or "").strip().strip("<>")
+        if message_id:
+            return f"message-id:{message_id.lower()}"
+
+        normalized_subject = " ".join((subject or "").lower().split())
+        received_marker = received_at.isoformat() if received_at else ""
+        return f"fallback:{sender.strip().lower()}|{normalized_subject}|{received_marker}"
 
     def _csv_terms(self, raw: str | None) -> list[str]:
         return [term.strip().lower() for term in (raw or "").split(",") if term.strip()]
@@ -1151,16 +1276,31 @@ class EmailIngestionService:
                 sync_setting = self.db.query(EmailSyncSetting).filter(EmailSyncSetting.user_id == account.user_id).first()
                 approach = sync_setting.ingestion_approach if sync_setting else "approach_1"
                 pending_email_ids: set[str] = set()
+                ignored_email_ids: set[str] = set()
+                ignored_email_fingerprints: set[str] = set()
                 if sync_setting:
                     try:
                         import json
+                        approval_items = json.loads(sync_setting.pending_approvals or "[]")
                         pending_email_ids = {
                             str(item.get("email_id"))
-                            for item in json.loads(sync_setting.pending_approvals or "[]")
-                            if isinstance(item, dict) and item.get("email_id")
+                            for item in approval_items
+                            if isinstance(item, dict) and item.get("email_id") and not item.get("ignored")
+                        }
+                        ignored_email_ids = {
+                            str(item.get("email_id"))
+                            for item in approval_items
+                            if isinstance(item, dict) and item.get("email_id") and item.get("ignored")
+                        }
+                        ignored_email_fingerprints = {
+                            str(item.get("fingerprint"))
+                            for item in approval_items
+                            if isinstance(item, dict) and item.get("fingerprint") and item.get("ignored")
                         }
                     except Exception:
                         pending_email_ids = set()
+                        ignored_email_ids = set()
+                        ignored_email_fingerprints = set()
 
                 mailbox = "INBOX"
                 if approach == "approach_1":
@@ -1284,6 +1424,7 @@ class EmailIngestionService:
                         email_date = self._message_received_at(message)
                         display_name, sender = self._extract_sender(message)
                         subject = message.get("Subject") or ""
+                        email_fingerprint = self._message_fingerprint(message, sender, subject, email_date)
 
                         labels = message.get("X-Gmail-Labels", "")
                         list_unsubscribe = message.get("List-Unsubscribe", "")
@@ -1365,6 +1506,11 @@ class EmailIngestionService:
                         if approach == "approach_2" and sync_setting:
                             domain = get_supplier_domain(sender)
                             trusted_list = self._csv_terms(sync_setting.trusted_suppliers)
+                            if raw_id_str in ignored_email_ids or email_fingerprint in ignored_email_fingerprints:
+                                logger.info("Skipping email id=%s because user denied processing previously", raw_id_str)
+                                self._create_skipped_email_record(raw_id_str, sender, display_name, subject, "ignored: denied by user", active_tenant_id, email_date)
+                                self._mark_seen(client, msg_id)
+                                continue
                             if not approach2_semantic_subject_match:
                                 logger.info("Skipping email id=%s because approach-2 semantic subject check did not match", raw_id_str)
                                 self._create_skipped_email_record(raw_id_str, sender, display_name, subject, "ignored: semantic subject mismatch", active_tenant_id, email_date)
@@ -1393,9 +1539,14 @@ class EmailIngestionService:
                                     except Exception:
                                         pending_list = []
 
-                                    if not any(item["email_id"] == raw_id_str for item in pending_list):
+                                    if not any(
+                                        isinstance(item, dict)
+                                        and (item.get("email_id") == raw_id_str or item.get("fingerprint") == email_fingerprint)
+                                        for item in pending_list
+                                    ):
                                         pending_list.append({
                                             "email_id": raw_id_str,
+                                            "fingerprint": email_fingerprint,
                                             "sender": sender,
                                             "supplier_name": display_name or sender,
                                             "subject": subject,

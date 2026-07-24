@@ -1,44 +1,188 @@
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
-from groq import Groq
+import httpx
 
 from backend.app.config import get_settings
 from backend.app.schemas import ExtractedCatalogItem, QueryPlan
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_CHUNK_CHARS = 12000
-EXTRACTION_CHUNK_OVERLAP_LINES = 4
+EXTRACTION_CHUNK_CHARS = 2500
+EXTRACTION_CHUNK_OVERLAP_LINES = 2
 
 
-class GroqClient:
+class OpenRouterClient:
     def __init__(self) -> None:
         settings = get_settings()
-        self.client = Groq(api_key=settings.groq_api_key)
-        self.model = settings.groq_model
+        self.api_key = settings.openrouter_api_key
+        self.model = settings.openrouter_model
+        self.base_url = settings.openrouter_base_url.rstrip("/")
+        self.site_url = settings.openrouter_site_url or settings.frontend_origin
+        self.app_name = settings.openrouter_app_name or settings.app_name
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY is required for LLM processing.")
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if self.site_url:
+            headers["HTTP-Referer"] = self.site_url
+        if self.app_name:
+            headers["X-Title"] = self.app_name
+        return headers
+
+    def _chat(self, messages: list[dict[str, str]], *, temperature: float = 0, json_mode: bool = False) -> str:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 12000,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        with httpx.Client(timeout=90) as client:
+            response = client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+        return data["choices"][0]["message"].get("content") or ""
 
     def _json_chat(self, system: str, user: str) -> dict[str, Any]:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        content = self._chat(
+            [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             temperature=0,
-            response_format={"type": "json_object"},
-            max_tokens=8192,
+            json_mode=True,
         )
-        content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        return self._parse_json_response(content)
+
+    def _parse_json_response(self, content: str) -> dict[str, Any]:
+        cleaned = self._strip_json_fences(content)
+        for candidate in self._json_candidates(cleaned):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                repaired = self._repair_common_json_defects(candidate)
+                try:
+                    return json.loads(repaired)
+                except json.JSONDecodeError:
+                    continue
+
+        items = self._salvage_items_array(cleaned)
+        if items:
+            logger.warning("Recovered %s item(s) from malformed OpenRouter JSON response", len(items))
+            return {"items": items}
+
+        logger.error("OpenRouter returned invalid JSON. Response preview: %s", cleaned[:1000])
+        raise json.JSONDecodeError("OpenRouter response was not valid JSON", cleaned, 0)
+
+    def _strip_json_fences(self, content: str) -> str:
+        cleaned = (content or "").strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        return cleaned.strip()
+
+    def _json_candidates(self, content: str) -> list[str]:
+        candidates = [content]
+        first_object = content.find("{")
+        last_object = content.rfind("}")
+        if first_object != -1 and last_object > first_object:
+            candidates.append(content[first_object : last_object + 1])
+        return list(dict.fromkeys(candidate for candidate in candidates if candidate.strip()))
+
+    def _repair_common_json_defects(self, content: str) -> str:
+        repaired = content.strip()
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        repaired = repaired.replace("\u201c", '"').replace("\u201d", '"')
+        repaired = repaired.replace("\u2018", "'").replace("\u2019", "'")
+        return repaired
+
+    def _salvage_items_array(self, content: str) -> list[dict[str, Any]]:
+        items_key = re.search(r'"items"\s*:', content)
+        if not items_key:
+            return []
+        array_start = content.find("[", items_key.end())
+        if array_start == -1:
+            return []
+
+        decoder = json.JSONDecoder()
+        items: list[dict[str, Any]] = []
+        index = array_start + 1
+        while index < len(content):
+            while index < len(content) and content[index] in " \r\n\t,":
+                index += 1
+            if index >= len(content) or content[index] == "]":
+                break
+            if content[index] != "{":
+                index += 1
+                continue
+
+            object_text = self._read_balanced_json_object(content, index)
+            if not object_text:
+                break
+            try:
+                parsed = decoder.decode(self._repair_common_json_defects(object_text))
+            except json.JSONDecodeError:
+                index += max(len(object_text), 1)
+                continue
+            if isinstance(parsed, dict):
+                items.append(parsed)
+            index += len(object_text)
+        return items
+
+    def _read_balanced_json_object(self, content: str, start: int) -> str:
+        depth = 0
+        in_string = False
+        escape = False
+        for index in range(start, len(content)):
+            char = content[index]
+            if escape:
+                escape = False
+                continue
+            if char == "\\" and in_string:
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start : index + 1]
+        return ""
 
     def extract_catalog_items(self, pdf_text: str, reference_date: datetime | None = None) -> list[ExtractedCatalogItem]:
         extracted: list[ExtractedCatalogItem] = []
         seen: set[tuple] = set()
-        for chunk in self._chunk_text(pdf_text):
-            for item in self._extract_catalog_items_chunk(chunk, reference_date=reference_date):
+        chunks = self._chunk_text(pdf_text)
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            try:
+                chunk_items = self._extract_catalog_items_chunk(chunk, reference_date=reference_date)
+            except Exception:
+                logger.exception(
+                    "OpenRouter extraction failed for chunk %s/%s; continuing with remaining chunks",
+                    chunk_index,
+                    len(chunks),
+                )
+                continue
+            for item in chunk_items:
                 key = (
                     (item.normalized_name or item.ingredient_name).strip().lower(),
                     str(item.price_per_unit),
@@ -63,7 +207,8 @@ class GroqClient:
             "You are an expert AI parser for pharmaceutical and chemical supplier catalogs. "
             "Your task is to analyze the provided text (which could be a structured table, a conversational email body, or an unstructured list/paragraph) "
             "and extract all catalog items into a strict JSON structure. "
-            "Return a JSON object containing a single key 'items' mapping to an array of catalog items.\n\n"
+            "Return only valid minified JSON with a single key 'items' mapping to an array of catalog items. "
+            "Do not use markdown fences, comments, trailing commas, or explanatory text.\n\n"
             "Each catalog item in the array MUST contain the following fields:\n"
             "- ingredient_name: The raw name of the chemical, ingredient, or medicine (e.g., 'Citric Acid Anhydrous', 'Paracetamol API', 'Aspirin USP')\n"
             "- normalized_name: The lowercase, clean, canonical name of the ingredient, excluding grades, CAS, or pack sizes (e.g., 'citric acid', 'paracetamol', 'aspirin')\n"
@@ -177,7 +322,7 @@ class GroqClient:
         compact_rows = [
             {
                 "supplier": row.get("supplier_name"),
-                "item": row.get("normalized_name") or row.get("ingredient_name"),
+                "item": self._display_item_name(row),
                 "price": row.get("price_per_unit"),
                 "price_display": row.get("price_display"),
                 "currency": row.get("currency"),
@@ -186,12 +331,10 @@ class GroqClient:
                 "unit": row.get("unit"),
                 "lead_time": row.get("lead_time_text") or row.get("lead_time_days"),
                 "certifications": row.get("certifications"),
-                "score": row.get("recommendation_score"),
             }
             for row in rows[:20]
         ]
-        response = self.client.chat.completions.create(
-            model=self.model,
+        return self._chat(
             messages=[
                 {
                     "role": "system",
@@ -200,7 +343,7 @@ class GroqClient:
                         "1. Relevance: You only answer questions related to the MediCORE procurement intelligence system, "
                         "such as supplier catalogues, ingredients/chemicals, prices, inventory, lead times, sync status, settings, or supplier comparisons. "
                         "If the question is unrelated, you must politely refuse to answer. Example: 'I'm sorry, I can only help you with questions related to the MediCORE procurement intelligence system.'\n"
-                        "2. No Hallucinations: Do NOT invent or make up any suppliers, ingredient names, prices, quantities, lead times, or scores. "
+                        "2. No Hallucinations: Do NOT invent or make up any suppliers, ingredient names, prices, quantities, lead times, reliability ratings, or scores. "
                         "Only reference facts directly present in the provided context rows.\n"
                         "3. Handling No Data: If there are no matching context rows or if you do not know the answer, "
                         "state politely that you couldn't find any matching data or records in the database, and offer to help with a different procurement query. "
@@ -208,7 +351,8 @@ class GroqClient:
                         "If context rows are provided, they are matching database rows for the user's query. Do not say no data was found when rows are present.\n"
                         "4. Completeness: When mentioning prices, always include the exact currency (e.g. USD, INR, EUR) and unit (e.g. kg, bag, tablet). "
                         "Couple pricing with availability/quantity details if present to give a complete summary.\n"
-                        "5. Professional Insights: Provide a brief, helpful insight on the best recommendation or cheapest deal based on the data score or price.\n"
+                        "5. Professional Insights: Provide a brief, helpful insight on the best recommendation or cheapest deal based only on actual catalogue values such as price, quantity, lead time, MOQ, and date. "
+                        "Never mention supplier reliability scores, confidence scores, AI scores, percentages, ratings, or scoring formulas.\n"
                         "6. Formatting: Respond in a natural, friendly, professional, conversational tone (3-4 sentences max). "
                         "Return plain text only—no markdown, no bold text, no bullet points, and no tables."
                     ),
@@ -216,5 +360,10 @@ class GroqClient:
                 {"role": "user", "content": json.dumps({"question": question, "rows": compact_rows}, default=str)},
             ],
             temperature=0.3,
-        )
-        return response.choices[0].message.content or "No answer generated."
+        ) or "No answer generated."
+
+    def _display_item_name(self, row: dict[str, Any]) -> str | None:
+        name = row.get("normalized_name") or row.get("ingredient_name")
+        if not name:
+            return None
+        return f"{name} (U)" if row.get("is_updated") else str(name)

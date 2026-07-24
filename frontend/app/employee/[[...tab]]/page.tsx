@@ -61,6 +61,7 @@ type SupplierItem = {
   source_document?: string | null;
   catalog_email_id?: string | null;
   received_at?: string | null;
+  is_updated?: boolean;
 };
 
 type SupplierApiRow = {
@@ -276,24 +277,60 @@ function safeQty(value: number | null | undefined): number {
   return value == null ? 0 : value;
 }
 
+function isMissingDisplayValue(value: unknown): boolean {
+  if (value == null) return true;
+  return ["", "na", "n/a", "none", "null", "-", "--"].includes(String(value).trim().toLowerCase());
+}
+
+function displayText(value: unknown): string {
+  return isMissingDisplayValue(value) ? "-" : String(value);
+}
+
+function displayItemName(item: Pick<SupplierItem, "ingredient_name" | "normalized_name" | "is_updated"> | Record<string, unknown>): string {
+  const rawName = (item as any).normalized_name ?? (item as any).ingredient_name;
+  const name = displayText(rawName);
+  return name !== "-" && (item as any).is_updated ? `${name} (U)` : name;
+}
+
+function isNumericOnlyDisplay(value: unknown): boolean {
+  if (isMissingDisplayValue(value)) return false;
+  return /^[+-]?\d+(?:\.\d+)?$/.test(String(value).trim());
+}
+
 function displayPrice(item: Pick<SupplierItem, "price_display" | "price_per_unit" | "currency" | "unit">): string {
-  if (item.price_display) return item.price_display;
+  if (!isMissingDisplayValue(item.price_display) && !isNumericOnlyDisplay(item.price_display)) return String(item.price_display);
   if (item.price_per_unit == null) return "-";
   return `${formatMoney(item.price_per_unit, item.currency)}/${item.unit || "unit"}`;
 }
 
 function displayQuantity(item: Pick<SupplierItem, "quantity_display" | "available_qty" | "unit">): string {
-  if (item.quantity_display) return item.quantity_display;
+  if (!isMissingDisplayValue(item.quantity_display) && !isNumericOnlyDisplay(item.quantity_display)) return String(item.quantity_display);
   if (item.available_qty == null) return "-";
   return `${formatQuantity(item.available_qty)} ${item.unit || ""}`.trim();
 }
 
+function displayRichness(row: Record<string, unknown>): number {
+  const value = `${row.price_display ?? ""} ${row.quantity_display ?? ""}`;
+  let score = value.length;
+  if (/(USD|INR|EUR|GBP|\$|₹|€|£)/i.test(value)) score += 30;
+  if (/\/|\b(kg|g|mg|bag|drum)\b/i.test(value)) score += 20;
+  return score;
+}
+
+function shouldPreferAssistantRow(next: Record<string, unknown>, current: Record<string, unknown>): boolean {
+  if (Boolean(next.is_updated) !== Boolean(current.is_updated)) return Boolean(next.is_updated);
+  const nextTime = new Date(String(next.received_at ?? 0)).getTime();
+  const currentTime = new Date(String(current.received_at ?? 0)).getTime();
+  if (Number.isFinite(nextTime) && Number.isFinite(currentTime) && nextTime !== currentTime) return nextTime > currentTime;
+  return displayRichness(next) > displayRichness(current);
+}
+
 function displayLeadTime(item: Pick<SupplierItem, "lead_time_text" | "lead_time_days">): string {
-  return item.lead_time_text || (item.lead_time_days != null ? `${item.lead_time_days} days` : "-");
+  return !isMissingDisplayValue(item.lead_time_text) ? String(item.lead_time_text) : (item.lead_time_days != null ? `${item.lead_time_days} days` : "-");
 }
 
 function displayMoq(item: Pick<SupplierItem, "moq_display" | "moq" | "unit">): string {
-  return item.moq_display || (item.moq != null ? `${formatQuantity(Number(item.moq))} ${item.unit || ""}`.trim() : "-");
+  return !isMissingDisplayValue(item.moq_display) ? String(item.moq_display) : (item.moq != null ? `${formatQuantity(Number(item.moq))} ${item.unit || ""}`.trim() : "-");
 }
 
 function formatShortDate(value: string | null | undefined): string {
@@ -455,8 +492,9 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
           setSyncSuccess(false);
         }, 2000);
       } else {
-        console.error("Email sync failed", response.status, await response.text().catch(() => ""));
-        setSyncNotice("Email sync failed. Check connected inbox settings and try again.");
+        const errorPayload = await response.json().catch(() => null);
+        console.error("Email sync failed", response.status, errorPayload);
+        setSyncNotice(errorPayload?.detail || "Email sync failed. Check connected inbox settings and try again.");
       }
     } catch (err) {
       console.error(err);
@@ -546,7 +584,8 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
 
   const pendingApprovalsList = useMemo(() => {
     try {
-      return JSON.parse(syncSettings.pending_approvals || "[]");
+      const approvals = JSON.parse(syncSettings.pending_approvals || "[]");
+      return Array.isArray(approvals) ? approvals.filter((item: any) => !item?.ignored) : [];
     } catch (e) {
       return [];
     }
@@ -739,7 +778,28 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     return inboxThreads.find((thread) => thread.id === selectedInboxThreadId) ?? inboxThreads[0];
   }, [inboxThreads, selectedInboxThreadId]);
 
-  const assistantRows = rows as Array<Record<string, unknown>>;
+  const assistantRows = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    const lastUserQuery = [...messages].reverse().find((message) => message.role === "user")?.text ?? "";
+    const queryTokens = new Set(
+      lastUserQuery
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .split(/\s+/)
+        .filter((token) => token.length >= 3 && !["price", "supplier", "suppliers", "show", "find", "give", "for", "the"].includes(token))
+    );
+    for (const row of rows as Array<Record<string, unknown>>) {
+      const rowName = String(row.normalized_name ?? row.ingredient_name ?? "").toLowerCase();
+      const matchedToken = Array.from(queryTokens).find((token) => rowName.includes(token));
+      const itemKey = matchedToken || rowName.replace(/[^a-z0-9]+/g, " ").trim();
+      const key = `${String(row.email_domain ?? row.supplier_name ?? "").toLowerCase()}-${itemKey}`;
+      const current = map.get(key);
+      if (!current || shouldPreferAssistantRow(row, current)) {
+        map.set(key, row);
+      }
+    }
+    return Array.from(map.values());
+  }, [messages, rows]);
 
   const latestSupplierRows = useMemo(() => {
     const map = new Map<string, SupplierTableRow>();
@@ -1178,7 +1238,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
       try {
         const [suppliersRes, itemsRes, emailsRes] = await Promise.all([
           authFetch(`${apiBaseUrl}/api/suppliers`),
-          authFetch(`${apiBaseUrl}/api/catalogs/items?limit=200&latest_only=false`),
+          authFetch(`${apiBaseUrl}/api/catalogs/items?limit=5000&latest_only=true`),
           authFetch(`${apiBaseUrl}/api/catalogs/emails?limit=50`),
         ]);
 
@@ -1229,10 +1289,11 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
   useEffect(() => {
     if (!authUser) return;
     const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       setDataRefreshKey((current) => current + 1);
       fetchEmailSyncSettings();
       fetchConnectedAccounts();
-    }, 30000);
+    }, 300000);
     return () => window.clearInterval(intervalId);
   }, [authUser, apiBaseUrl]);
 
@@ -1507,7 +1568,13 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
     } catch (e) {
       currentPending = [];
     }
-    const newPending = currentPending.filter((p: any) => p.email_id !== item.email_id);
+    const ignoredRecord = {
+      ...item,
+      ignored: true,
+      ignored_at: new Date().toISOString(),
+    };
+    const withoutCurrent = currentPending.filter((p: any) => p.email_id !== item.email_id);
+    const newPending = [...withoutCurrent, ignoredRecord];
 
     await saveEmailSyncSettings({
       pending_approvals: JSON.stringify(newPending)
@@ -1631,6 +1698,8 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
           setDataRefreshKey((current) => current + 1);
         }, 1500);
       } else {
+        const errorPayload = await res.json().catch(() => null);
+        setSyncNotice(errorPayload?.detail || "Email sync failed. Check connected inbox settings and try again.");
         setSyncingAccountsState(prev => ({ ...prev, [id]: false }));
       }
     } catch (error) {
@@ -2155,7 +2224,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                     ) : dashboardData.deals.map((deal, index) => (
                       <article className={`deal-row ${index === 2 ? "warning" : ""}`} key={deal.name}>
                         <div>
-                          <strong>{deal.best.ingredient_name}</strong>
+                          <strong>{displayItemName(deal.best)}</strong>
                           <span>{deal.best.supplier_name} - {displayQuantity(deal.best)}</span>
                         </div>
                         <div className="deal-price">
@@ -2303,7 +2372,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                                   const bestPrice = Math.min(...selectedInboxThread.items.map((row) => safePrice(row.price_per_unit, row.currency)));
                                   return (
                                     <tr key={`${item.supplier_name}-${item.ingredient_name}-${index}`}>
-                                      <td>{item.ingredient_name}</td>
+                                      <td>{displayItemName(item)}</td>
                                       <td>{displayPrice(item)}</td>
                                       <td>{displayQuantity(item)}</td>
                                       <td>{displayLeadTime(item)}</td>
@@ -2425,7 +2494,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                               : "Good";
                           return (
                             <tr key={`${item.supplier_name}-${item.ingredient_name}-${index}`}>
-                              <td>{item.ingredient_name}</td>
+                              <td>{displayItemName(item)}</td>
                               <td>{displayPrice(item)}</td>
                               <td>{displayQuantity(item)}</td>
                               <td>{displayLeadTime(item)}</td>
@@ -2496,7 +2565,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                   <label className="compare-sort">
                     <span>Sort by</span>
                     <select value={compareSort} onChange={(event) => setCompareSort(event.target.value as CompareSort)}>
-                      <option value="best-value">Best value score</option>
+                      <option value="best-value">Best value</option>
                       <option value="highest-qty">Highest qty</option>
                       <option value="lowest-price">Lowest price</option>
                     </select>
@@ -2506,88 +2575,52 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
 
               {compareData.rows.length > 0 && (
                 <p className="compare-note">
-                  Showing {compareData.rows.length} suppliers who carry this ingredient - Top 3 shown as cards - AI score = price + quantity
+                  Showing latest offers from {compareData.rows.length} supplier{compareData.rows.length === 1 ? "" : "s"} for {displayText(compareData.ingredientLabel)}.
                 </p>
               )}
 
               {supplierLoading ? (
-                <div className="compare-empty">Loading mock comparison data...</div>
+                <div className="compare-empty">Loading supplier comparison data...</div>
               ) : supplierError ? (
                 <div className="compare-empty">{supplierError}</div>
               ) : !selectedCompareIngredient.trim() ? (
                 <div className="compare-empty">Select an ingredient from suggestions to compare suppliers.</div>
               ) : compareData.rows.length === 0 ? (
-                <div className="compare-empty">No mock suppliers found for this ingredient.</div>
+                <div className="compare-empty">No suppliers found for this ingredient.</div>
               ) : (
                 <>
                   <div className="compare-card-grid">
                     {compareData.topRows.map((row, index) => (
-                      <article className={`compare-card ${index === 0 ? "recommended" : ""}`} key={`${row.supplier_name}-${row.ingredient_name}`}>
-                        {index === 0 && <div className="recommended-ribbon">AI recommended</div>}
+                      <article className="compare-card" key={`${row.supplier_name}-${row.ingredient_name}`}>
                         <div className="compare-supplier-head">
                           <div className="supplier-badge">{supplierInitials(row.supplier_name)}</div>
                           <div>
                             <h3>{row.supplier_name}</h3>
-                            <p style={{ margin: 0 }}>{row.email_domain}</p>
-                            {row.certifications && (
-                              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "4px" }}>
-                                {row.certifications.split(",").map((cert) => {
-                                  const trimmed = cert.trim();
-                                  return (
-                                    <span
-                                      key={trimmed}
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        background: "rgba(15, 122, 95, 0.06)",
-                                        color: "var(--accent)",
-                                        fontSize: "10px",
-                                        fontWeight: 600,
-                                        padding: "1px 5px",
-                                        borderRadius: "3px",
-                                        border: "1px solid rgba(15, 122, 95, 0.12)",
-                                      }}
-                                    >
-                                      {trimmed}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
+                            <p style={{ margin: 0 }}>{displayItemName(row)} · {row.email_domain}</p>
                           </div>
                         </div>
 
                         <div className="compare-stat-grid">
                           <div>
                             <strong>{displayPrice(row)}</strong>
-                            <span>Per {row.unit}</span>
+                            <span>Price/unit</span>
                           </div>
                           <div>
                             <strong>{displayQuantity(row)}</strong>
-                            <span>Units avail.</span>
+                            <span>Qty available</span>
                           </div>
                           <div>
                             <strong>{displayLeadTime(row)}</strong>
                             <span>Lead time</span>
                           </div>
-                        </div>
-
-                        <div className="score-bars">
-                          {[
-                            ["Price", row.priceScore],
-                            ["Qty", row.qtyScore],
-                            ["Overall", row.overallScore],
-                          ].map(([label, value]) => (
-                            <div className="score-row" key={label}>
-                              <span>{label}</span>
-                              <div className="score-track" aria-hidden="true">
-                                <svg viewBox="0 0 100 5" preserveAspectRatio="none" role="presentation" focusable="false">
-                                  <rect x="0" y="0" width={Math.max(0, Math.min(100, Number(value)))} height="5" rx="2.5" />
-                                </svg>
-                              </div>
-                              <strong>{value}</strong>
-                            </div>
-                          ))}
+                          <div>
+                            <strong>{displayMoq(row)}</strong>
+                            <span>MOQ</span>
+                          </div>
+                          <div>
+                            <strong>{formatDDMMYY(row.received_at)}</strong>
+                            <span>Updated</span>
+                          </div>
                         </div>
 
                         <button className="view-catalog-button" type="button" onClick={() => {
@@ -2600,7 +2633,7 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                   </div>
 
                   <section className="compare-table-panel">
-                    <h2>Other {compareData.otherRows.length} suppliers for {compareData.ingredientLabel}</h2>
+                    <h2>Supplier comparison for {displayText(compareData.ingredientLabel)}</h2>
                     <div className="table-wrap">
                       <table>
                         <thead>
@@ -2612,25 +2645,23 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                             <th>Lead Time</th>
                             <th>MOQ</th>
                             <th>Date</th>
-                            <th>Score</th>
                             <th>Certifications</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {compareData.otherRows.length === 0 ? (
+                          {compareData.rows.length === 0 ? (
                             <tr>
-                              <td colSpan={9}>Only top suppliers found for this ingredient.</td>
+                              <td colSpan={8}>Only top suppliers found for this ingredient.</td>
                             </tr>
-                          ) : compareData.otherRows.map((row, index) => (
+                          ) : compareData.rows.map((row, index) => (
                             <tr key={`${row.supplier_name}-${row.ingredient_name}-table`}>
-                              <td>{index + 4}</td>
+                              <td>{index + 1}</td>
                               <td>{row.supplier_name}</td>
                               <td>{displayPrice(row)}</td>
                               <td>{displayQuantity(row)}</td>
                               <td>{displayLeadTime(row)}</td>
                               <td>{displayMoq(row)}</td>
                               <td>{formatDDMMYY(row.received_at)}</td>
-                              <td>{row.overallScore}</td>
                               <td>
                                 {row.certifications ? (
                                   <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", justifyContent: "center" }}>
@@ -2714,12 +2745,12 @@ export default function Home({ params }: { params: Promise<{ tab?: string[] }> }
                       ) : (
                         assistantRows.map((row, index) => (
                           <tr key={index}>
-                            <td>{String(row.supplier_name ?? "-")}</td>
-                            <td>{String(row.normalized_name ?? row.ingredient_name ?? "-")}</td>
-                            <td>{row.price_display ? String(row.price_display) : (typeof row.price_per_unit === "number" ? `${formatMoney(Number(row.price_per_unit), String(row.currency ?? "INR"))}/${String(row.unit ?? "unit")}` : "-")}</td>
-                            <td>{row.quantity_display ? String(row.quantity_display) : (row.available_qty != null ? `${formatQuantity(Number(row.available_qty))} ${String(row.unit ?? "")}` : "-")}</td>
-                            <td>{row.lead_time_text ? String(row.lead_time_text) : (row.lead_time_days != null ? `${row.lead_time_days} days` : "-")}</td>
-                            <td>{row.moq_display ? String(row.moq_display) : (row.moq != null ? `${formatQuantity(Number(row.moq))} ${String(row.unit ?? "")}` : "-")}</td>
+                            <td>{displayText(row.supplier_name)}</td>
+                            <td>{displayItemName(row)}</td>
+                            <td>{displayPrice(row as SupplierItem)}</td>
+                            <td>{displayQuantity(row as SupplierItem)}</td>
+                            <td>{!isMissingDisplayValue(row.lead_time_text) ? String(row.lead_time_text) : (row.lead_time_days != null ? `${row.lead_time_days} days` : "-")}</td>
+                            <td>{!isMissingDisplayValue(row.moq_display) ? String(row.moq_display) : (row.moq != null ? `${formatQuantity(Number(row.moq))} ${String(row.unit ?? "")}` : "-")}</td>
                             <td>{formatDDMMYY(row.received_at as string)}</td>
                             <td>
                               {row.certifications ? (

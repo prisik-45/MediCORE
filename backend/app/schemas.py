@@ -4,6 +4,20 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+MISSING_TEXT_VALUES = {"", "na", "n/a", "none", "null", "-", "--"}
+
+
+def is_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    return str(value).strip().lower() in MISSING_TEXT_VALUES
+
+
+def clean_optional_text(value: object) -> str | None:
+    if is_missing_value(value):
+        return None
+    return str(value).strip()
+
 
 class ExtractedCatalogItem(BaseModel):
     ingredient_name: str
@@ -24,7 +38,7 @@ class ExtractedCatalogItem(BaseModel):
     def validate_price_per_unit(cls, v):
         if isinstance(v, bool):
             raise ValueError("price_per_unit cannot be boolean")
-        if v is None or str(v).strip().lower() in {"", "na", "n/a", "none", "null", "-"}:
+        if is_missing_value(v):
             return None
         return v
 
@@ -33,7 +47,7 @@ class ExtractedCatalogItem(BaseModel):
     def validate_available_qty(cls, v):
         if isinstance(v, bool):
             return None
-        if v is None or str(v).strip().lower() in {"", "na", "n/a", "none", "null", "-"}:
+        if is_missing_value(v):
             return None
         try:
             return float(v)
@@ -45,7 +59,7 @@ class ExtractedCatalogItem(BaseModel):
     def validate_moq(cls, v):
         if isinstance(v, bool):
             return None
-        if v is None:
+        if is_missing_value(v):
             return None
         try:
             return float(v)
@@ -55,18 +69,22 @@ class ExtractedCatalogItem(BaseModel):
     @field_validator("lead_time_days", mode="before")
     @classmethod
     def validate_lead_time_days(cls, v):
-        if isinstance(v, bool) or v in {"", "na", "n/a", "none", "null", "-"}:
+        if isinstance(v, bool) or is_missing_value(v):
             return None
         if isinstance(v, str) and any(token in v.lower() for token in ("-", "to", "–")):
             return None
         return v
 
-    @field_validator("unit", mode="before")
+    @field_validator("unit", "supplier_sku", "lead_time_text", "notes", mode="before")
     @classmethod
-    def validate_unit(cls, v):
-        if v is None or not str(v).strip():
-            return None
-        return str(v)
+    def validate_optional_text(cls, v):
+        return clean_optional_text(v)
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def validate_currency(cls, v):
+        cleaned = clean_optional_text(v)
+        return cleaned.upper() if cleaned else "INR"
 
 
 
