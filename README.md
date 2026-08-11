@@ -167,15 +167,6 @@ OPENROUTER_APP_NAME=MediCORE
 - Deploy `frontend` to Vercel
 - Inject environment variables from `.env.example`
 
-Railway disables outbound SMTP on Free, Trial, and Hobby plans, so Gmail SMTP can work on localhost but fail in Railway with `[Errno 101] Network is unreachable`. For Railway deployments, use an HTTPS transactional email provider such as Resend:
-
-```env
-RESEND_API_KEY=re_your_resend_api_key
-RESEND_FROM=MediCORE <onboarding@your-verified-domain.com>
-```
-
-`RESEND_FROM` must be a sender/domain verified in Resend. If `RESEND_API_KEY` is present, MediCORE sends admin invitations and password reset emails through Resend's HTTPS API instead of SMTP.
-
 ### AWS Production Deployment:
 - Run API and Celery worker as separate ECS/Fargate services
 - Use Valkey, ElastiCache, or another Redis-compatible broker

@@ -1,8 +1,12 @@
+import sys
 import unittest
 from datetime import UTC, datetime
 from email.message import EmailMessage
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.app.models import CatalogEmail, CatalogItem, Supplier
 from backend.app.services.document_classifier import CATALOGUE, CERTIFICATE, DocumentClassification
@@ -359,6 +363,30 @@ class CertificateIngestionTest(unittest.TestCase):
             "Appearance: White powder\nLoss on Drying: 0.3%\nConforms",
         )
         self.assertEqual(document.category, CERTIFICATE)
+
+    def test_ingestion_only_treats_pdf_documents_as_certificates(self) -> None:
+        service = object.__new__(EmailIngestionService)
+
+        pdf_doc = service._classify_document(
+            "COA_Zinc_Gluconate.pdf",
+            ".pdf",
+            "Certificate of Analysis\nBatch No: ZG-2026-17\nAssay: 99.4%",
+        )
+        image_doc = service._classify_document(
+            "COA_Zinc_Gluconate.png",
+            ".png",
+            "Certificate of Analysis\nBatch No: ZG-2026-17\nAssay: 99.4%",
+        )
+        spreadsheet_doc = service._classify_document(
+            "Certificate_Analysis.xlsx",
+            ".xlsx",
+            "Certificate of Analysis\nBatch No: ZG-2026-17\nAssay: 99.4%",
+        )
+
+        self.assertEqual(pdf_doc.category, CERTIFICATE)
+        self.assertEqual(image_doc.category, CATALOGUE)
+        self.assertEqual(spreadsheet_doc.category, CATALOGUE)
+        self.assertFalse(service._is_certificate_pdf("COA_Zinc_Gluconate.png", ".png", image_doc.category))
 
 
 if __name__ == "__main__":

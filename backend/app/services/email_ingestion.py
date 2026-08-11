@@ -1243,26 +1243,12 @@ class EmailIngestionService:
 
     def _classify_document(self, filename: str, ext: str, text: str | None, context_text: str | None = None):
         ext_lower = ext.lower()
-        if ext_lower in {".xlsx", ".xls", ".xlsm", ".xltx", ".xltm", ".csv"}:
-            classification = classify_document(filename, ext, text, context_text)
-            if classification.category == CERTIFICATE:
-                return classification
-            return classify_document(filename, ext, f"{text or ''}\nproduct quantity price quotation", context_text)
-        if ext_lower in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}:
-            classification = classify_document(filename, ext, text, context_text)
-            if classification.category == CERTIFICATE:
-                return classification
-            if classification.category != OTHER:
-                return classification
-            if text and (
-                any(kw in text.lower() for kw in ("price", "qty", "quantity", "catalog", "quote", "offer", "table", "usd", "inr", "rs", "moq", "lead time", "kg", "g", "ml", "liter"))
-                or len(text.strip()) > 30
-            ):
-                return DocumentClassification(CATALOGUE, 0.85, None)
+        if ext_lower != ".pdf":
+            return DocumentClassification(CATALOGUE, 0.95, None)
         return classify_document(filename, ext, text, context_text)
 
     def _is_certificate_pdf(self, filename: str, ext: str, text: str | None = None) -> bool:
-        if ext.lower() not in {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}:
+        if ext.lower() != ".pdf":
             return False
         return self._classify_document(filename, ext, text).category == CERTIFICATE
 
@@ -3193,4 +3179,3 @@ class EmailIngestionService:
         except Exception as e:
             self.db.rollback()
             logger.error("Failed to write skipped email tombstone to DB: %s", e)
-

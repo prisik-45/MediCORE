@@ -60,8 +60,6 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = Field(default="", repr=False)
     smtp_sender: str = "medicore.ai@gmail.com"
-    resend_api_key: str = Field(default="", repr=False)
-    resend_from: str = ""
     superadmin_email_id: str = "prisik.da45@gmail.com"
 
     @property
