@@ -143,7 +143,6 @@ def register_admin(payload: AdminRegisterRequest, db: Session = Depends(get_db))
 @router.post("/employees/invite", status_code=status.HTTP_201_CREATED)
 def invite_employee(
     payload: EmployeeInviteRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin)
 ):
@@ -185,14 +184,13 @@ def invite_employee(
         status="Pending Activation"
     )
     db.add(new_invite)
-    db.commit()
+    db.flush()
     
     admin_profile = db.query(Profile).filter(Profile.id == admin_uuid).first()
     org_name = admin_profile.organisation if (admin_profile and admin_profile.organisation) else "MediCORE"
     safe_payload_name = escape_html(payload.name)
     safe_org_name = escape_html(org_name)
 
-    # Send invitation email via background Celery task
     activation_link = f"{settings.frontend_origin}/activate?token={token}"
     email_html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#17211c;max-width:500px;margin:0 auto;padding:24px;border:1px solid #dce4df;border-radius:12px;">
@@ -207,7 +205,16 @@ def invite_employee(
       <p style="font-size:12px;color:#66736d;margin:0;">Regards,<br>MediCORE Team</p>
     </div>
     """
-    background_tasks.add_task(send_smtp_email, payload.email, "You're invited to join MediCORE", email_html)
+
+    email_sent = send_smtp_email(payload.email, "You're invited to join MediCORE", email_html)
+    if not email_sent:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invitation email could not be sent. Please check SMTP/network configuration and try again.",
+        )
+
+    db.commit()
     return {"message": "Invitation sent successfully."}
 
 # 4. Verify Invitation Token
@@ -463,7 +470,6 @@ def delete_employee(
 @router.post("/employees/{user_id}/reset-password")
 def reset_password(
     user_id: UUID,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin)
 ):
@@ -488,7 +494,7 @@ def reset_password(
         status="Pending"
     )
     db.add(reset_record)
-    db.commit()
+    db.flush()
     
     # Retrieve user email by looking up Supabase or mock user record
     # Since email details are in Supabase auth, we'll try to retrieve the email address.
@@ -522,7 +528,16 @@ def reset_password(
       <p style="font-size:12px;color:#66736d;margin:0;">Regards,<br>MediCORE Team</p>
     </div>
     """
-    background_tasks.add_task(send_smtp_email, user_email, "Reset your MediCORE password", email_html)
+
+    email_sent = send_smtp_email(user_email, "Reset your MediCORE password", email_html)
+    if not email_sent:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Password reset email could not be sent. Please check SMTP/network configuration and try again.",
+        )
+
+    db.commit()
     return {"message": "Password reset link emailed successfully."}
 
 # 8. Verify Password Reset Token
