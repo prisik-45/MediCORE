@@ -21,7 +21,6 @@ frontend/out/
 *.sqlite
 *.db
 
-uv.lock
 
 
 sample-Catalogue.pdf
