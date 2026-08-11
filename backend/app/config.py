@@ -84,8 +84,8 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if self.supabase_service_role_key in {"", "replace-me"}:
             missing.append("SUPABASE_SERVICE_ROLE_KEY")
-        if self.groq_api_key in {"", "replace-me"}:
-            missing.append("GROQ_API_KEY")
+        if self.cerebras_api_key in {"", "replace-me"}:
+            missing.append("CEREBRAS_API_KEY")
         if self.openrouter_api_key in {"", "replace-me"}:
             missing.append("OPENROUTER_API_KEY")
         if not self.gmail_webhook_token:
