@@ -22,7 +22,7 @@ frontend/out/
 *.db
 
 uv.lock
-pyproject.toml
+
 
 sample-Catalogue.pdf
 sample-Catalogue-preview.png
