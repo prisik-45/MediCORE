@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv
+.uv-cache
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.git
+node_modules
+frontend/node_modules
+frontend/.next
+frontend/out
+*.log
+sample-Catalogue.pdf
