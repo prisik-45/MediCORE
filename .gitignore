@@ -8,8 +8,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-
+scripts/
 node_modules/
+md/
 frontend/node_modules/
 .next/
 frontend/.next/

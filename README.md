@@ -167,6 +167,33 @@ OPENROUTER_APP_NAME=MediCORE
 - Deploy `frontend` to Vercel
 - Inject environment variables from `.env.example`
 
+For Railway deployments where SMTP is unavailable, send admin invitation and password-reset emails through Gmail API:
+
+```env
+TRANSACTIONAL_EMAIL_PROVIDER=gmail_api
+GOOGLE_CLIENT_ID=your-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-oauth-client-secret
+GOOGLE_REFRESH_TOKEN=your-oauth-refresh-token
+GMAIL_API_SENDER=your-gmail-address@gmail.com
+GMAIL_USER_ID=me
+```
+
+Generate the refresh token locally. For a Desktop app OAuth client, the script uses this loopback redirect URI:
+
+```text
+http://127.0.0.1:8765
+```
+
+Then run:
+
+```powershell
+$env:GOOGLE_CLIENT_ID="your-oauth-client-id"
+$env:GOOGLE_CLIENT_SECRET="your-oauth-client-secret"
+uv run python scripts/generate_gmail_refresh_token.py
+```
+
+The OAuth client must request the `https://www.googleapis.com/auth/gmail.send` scope. Put the printed `GOOGLE_REFRESH_TOKEN` in Railway for both the FastAPI service and any Celery service that sends transactional emails.
+
 ### AWS Production Deployment:
 - Run API and Celery worker as separate ECS/Fargate services
 - Use Valkey, ElastiCache, or another Redis-compatible broker

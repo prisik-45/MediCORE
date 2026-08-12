@@ -54,12 +54,17 @@ class Settings(BaseSettings):
     gmail_user_id: str = "me"
     google_project_id: str = ""
     google_pubsub_topic: str = ""
+    google_client_id: str = Field(default="", repr=False)
+    google_client_secret: str = Field(default="", repr=False)
+    google_refresh_token: str = Field(default="", repr=False)
 
+    transactional_email_provider: str = "smtp"
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = Field(default="", repr=False)
     smtp_sender: str = "medicore.ai@gmail.com"
+    gmail_api_sender: str = ""
     superadmin_email_id: str = "prisik.da45@gmail.com"
 
     @property
@@ -92,6 +97,15 @@ class Settings(BaseSettings):
             missing.append("GMAIL_WEBHOOK_TOKEN")
         if self.frontend_origin.startswith("http://"):
             missing.append("FRONTEND_ORIGIN must use https:// in production")
+        if self.transactional_email_provider.lower() == "gmail_api":
+            if not self.google_client_id:
+                missing.append("GOOGLE_CLIENT_ID")
+            if not self.google_client_secret:
+                missing.append("GOOGLE_CLIENT_SECRET")
+            if not self.google_refresh_token:
+                missing.append("GOOGLE_REFRESH_TOKEN")
+            if not (self.gmail_api_sender or self.smtp_sender):
+                missing.append("GMAIL_API_SENDER or SMTP_SENDER")
         queue_url = self.queue_url
         parsed_queue_url = urlparse(queue_url)
         if parsed_queue_url.hostname in {"localhost", "127.0.0.1"}:
