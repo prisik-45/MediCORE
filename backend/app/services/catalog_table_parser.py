@@ -128,17 +128,23 @@ def parse_catalog_table_text(
     seen: set[tuple[str, float, float, str]] = set()
     context = _table_context(text)
     reference_date = reference_date or datetime.now(UTC)
-    for vertical_item in _parse_vertical_catalog_rows(text, context):
-        key = _item_key(vertical_item)
-        if not dedupe or key not in seen:
-            seen.add(key)
-            items.append(vertical_item)
+    structured_spreadsheet = _is_structured_spreadsheet_text(text)
+
+    if not structured_spreadsheet:
+        for vertical_item in _parse_vertical_catalog_rows(text, context):
+            key = _item_key(vertical_item)
+            if not dedupe or key not in seen:
+                seen.add(key)
+                items.append(vertical_item)
 
     for table_item in _parse_generic_table(text, context):
         key = _item_key(table_item)
         if not dedupe or key not in seen:
             seen.add(key)
             items.append(table_item)
+
+    if structured_spreadsheet:
+        return _valid_catalog_items(items)
 
     for numbered_item in _parse_numbered_spec_quantity_rows(text):
         key = _item_key(numbered_item)
@@ -182,6 +188,10 @@ def parse_catalog_table_text(
             seen.add(_item_key(update_item))
             items.append(update_item)
     return _valid_catalog_items(items)
+
+
+def _is_structured_spreadsheet_text(text: str) -> bool:
+    return "[XLSX TABLE]" in text or "[CSV TABLE]" in text
 
 
 def _parse_vertical_catalog_rows(
@@ -493,11 +503,7 @@ def _parse_generic_table(text: str, context: dict[str, str | None]) -> list[Extr
         has_numeric_data = any(_number_from_text(p) is not None for p in parts[1:])
         possible_map = _header_map(parts)
         is_header_candidate = (
-            "name" in possible_map
-            and any(
-                key in possible_map
-                for key in ("price", "qty", "specification", "unit", "currency", "moq", "lead_time", "pack")
-            )
+            _catalogue_header_has_required_shape(parts, possible_map)
             and not has_numeric_data
         )
 
@@ -754,6 +760,38 @@ def _header_map(parts: list[str]) -> dict[str, int]:
     return mapped
 
 
+def _catalogue_header_has_required_shape(parts: list[str], mapped: dict[str, int]) -> bool:
+    if "name" not in mapped:
+        return False
+    if any(
+        key in mapped
+        for key in ("price", "qty", "specification", "unit", "currency", "moq", "lead_time", "pack")
+    ):
+        return True
+    name_index = mapped["name"]
+    return any(
+        index != name_index and _is_index_header(part)
+        for index, part in enumerate(parts)
+    )
+
+
+def _is_index_header(value: str | None) -> bool:
+    lowered = re.sub(r"[^a-z0-9#]+", " ", str(value or "").lower()).strip()
+    return lowered in {
+        "#",
+        "no",
+        "no.",
+        "s no",
+        "sr no",
+        "sl no",
+        "serial no",
+        "serial",
+        "s n",
+        "sn",
+        "id",
+    }
+
+
 def _header_cell_metadata(header: str | None) -> dict[str, str | None]:
     cleaned = _clean_header_text(header)
     lowered = cleaned.lower()
@@ -846,7 +884,15 @@ def is_valid_ingredient_name(name: object) -> bool:
         return False
     if len(value) < 3:
         return False
-    return bool(CHEMICAL_NAME_HINT_PATTERN.search(value))
+    if CHEMICAL_NAME_HINT_PATTERN.search(value):
+        return True
+    if re.search(r"[A-Za-z]", value) and len(re.findall(r"[A-Za-z]{2,}", value)) >= 2:
+        return not re.search(
+            r"\b(?:contact|email|phone|tel|website|address|notes?|supplier|company|inventory|catalogue|catalog|"
+            r"total|updated|price\s+list|sheet|table|organic botanicals|conventional botanicals|nutraceuticals)\b",
+            lowered,
+        )
+    return False
 
 
 def _valid_catalog_items(items: list[ExtractedCatalogItem]) -> list[ExtractedCatalogItem]:

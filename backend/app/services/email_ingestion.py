@@ -25,6 +25,7 @@ from backend.app.db import ensure_supabase_storage_bucket, get_supabase
 from backend.app.models import CatalogEmail, CatalogItem, Supplier
 from backend.app.services.catalog_table_parser import (
     CATALOG_TABLE_PARSER_VERSION,
+    _catalogue_header_has_required_shape,
     _header_map,
     extract_pack_size,
     is_valid_ingredient_name,
@@ -643,12 +644,14 @@ class EmailIngestionService:
             for item in parse_catalog_table_text(
                 parser_text,
                 reference_date=reference_date,
-                # Exact repeated rows are duplicates even in spreadsheets and CSVs.
-                # The row identity retains commercial fields, so price tiers remain.
-                dedupe=True,
+                # Spreadsheet catalogues can legitimately contain repeated
+                # rows across sheets/regions. Keep them through parsing; DB
+                # insertion still skips exact unchanged duplicates safely.
+                dedupe=not self._is_spreadsheet_table_text(parser_text),
             )
         ]
-        parsed = self._dedupe_extracted_items(parsed)
+        if not self._is_spreadsheet_table_text(parser_text):
+            parsed = self._dedupe_extracted_items(parsed)
         source_lower = source_name.lower()
         conversational_source = source_lower.endswith(".txt") or "email_body" in source_lower
         logger.info("Deterministic table parser extracted %s catalogue row(s) from %s", len(parsed), source_name)
@@ -693,6 +696,9 @@ class EmailIngestionService:
                     if block:
                         table_blocks.append(block)
         return "\n\n".join(dict.fromkeys(table_blocks)) or text
+
+    def _is_spreadsheet_table_text(self, text: str) -> bool:
+        return "[XLSX TABLE]" in text or "[CSV TABLE]" in text
 
     def _looks_like_structured_table_text(self, text: str) -> bool:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -2049,6 +2055,10 @@ class EmailIngestionService:
             xlsx_text = self._extract_xlsx_tables_text(file_path)
             if xlsx_text:
                 return xlsx_text
+        if ext in (".xls", ".xlsx", ".xlsm", ".xltx", ".xltm"):
+            workbook_text = self._extract_excel_tables_with_pandas(file_path, ext)
+            if workbook_text:
+                return workbook_text
         return self._extract_with_anydoc(file_path, fallback_format=ext.lstrip("."))
 
     def _extract_csv_tables_text(self, file_path: Path) -> str:
@@ -2058,7 +2068,50 @@ class EmailIngestionService:
         text = self._extract_xlsx_tables_from_xml(file_path)
         if text:
             return text
+        pandas_text = self._extract_excel_tables_with_pandas(file_path, file_path.suffix.lower())
+        if pandas_text:
+            return pandas_text
         return self._extract_with_anydoc(file_path, fallback_format=file_path.suffix.lower().lstrip("."))
+
+    def _extract_excel_tables_with_pandas(self, file_path: Path, ext: str) -> str:
+        try:
+            import pandas as pd
+
+            engine = "xlrd" if ext == ".xls" else "openpyxl"
+            sections: list[str] = []
+            global_table_number = 0
+            with pd.ExcelFile(file_path, engine=engine) as excel_file:
+                for sheet_name in excel_file.sheet_names:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, dtype=str).fillna("")
+                    cells: dict[tuple[int, int], str] = {}
+                    for row_offset, row in enumerate(df.itertuples(index=False), start=1):
+                        for col_offset, value in enumerate(row, start=1):
+                            cleaned = " ".join(str(value or "").split()).strip()
+                            if cleaned:
+                                cells[(row_offset, col_offset)] = cleaned
+                    for table in self._detect_xlsx_tables(cells):
+                        global_table_number += 1
+                        sections.append(
+                            self._format_xlsx_table(
+                                sheet_name,
+                                global_table_number,
+                                table["start_row"],
+                                table["start_col"],
+                                table["header"],
+                                table["rows"],
+                            )
+                        )
+            text = "\n\n".join(sections).strip()
+            if text:
+                logger.info(
+                    "Pandas workbook scanner extracted %s table(s) from %s",
+                    global_table_number,
+                    file_path.name,
+                )
+            return text
+        except Exception:
+            logger.debug("Pandas workbook scanner failed for %s", file_path.name, exc_info=True)
+            return ""
 
     def _extract_xlsx_tables_from_xml(self, file_path: Path) -> str:
         try:
@@ -2150,7 +2203,31 @@ class EmailIngestionService:
             text = self._xlsx_cell_text(cell, shared_strings, ns)
             if text:
                 cells[(row_index, col_index)] = text
+        for start_row, start_col, end_row, end_col in self._xlsx_merged_ranges(root, ns):
+            anchor = cells.get((start_row, start_col), "")
+            if not anchor or not self._should_propagate_merged_header(anchor):
+                continue
+            for row_index in range(start_row, end_row + 1):
+                for col_index in range(start_col, end_col + 1):
+                    cells.setdefault((row_index, col_index), anchor)
         return cells
+
+    def _xlsx_merged_ranges(self, root: Any, ns: dict[str, str]) -> list[tuple[int, int, int, int]]:
+        ranges: list[tuple[int, int, int, int]] = []
+        for merge_cell in root.findall(".//s:mergeCells/s:mergeCell", ns):
+            ref = merge_cell.attrib.get("ref", "")
+            if ":" not in ref:
+                continue
+            start_ref, end_ref = ref.split(":", 1)
+            start_row, start_col = self._xlsx_cell_ref_to_indexes(start_ref)
+            end_row, end_col = self._xlsx_cell_ref_to_indexes(end_ref)
+            if start_row and start_col and end_row and end_col:
+                ranges.append((start_row, start_col, end_row, end_col))
+        return ranges
+
+    def _should_propagate_merged_header(self, value: str) -> bool:
+        field = _header_cell_metadata(value).get("field")
+        return field in {"price", "qty", "unit", "currency", "moq", "lead_time", "pack", "specification"}
 
     def _xlsx_cell_text(self, cell: Any, shared_strings: list[str], ns: dict[str, str]) -> str:
         cell_type = cell.attrib.get("t")
@@ -2170,34 +2247,85 @@ class EmailIngestionService:
     def _detect_xlsx_tables(self, cells: dict[tuple[int, int], str]) -> list[dict[str, Any]]:
         if not cells:
             return []
-        rows = sorted({row for row, _ in cells})
+        row_columns: dict[int, list[int]] = defaultdict(list)
+        for (row, col), value in cells.items():
+            if value:
+                row_columns[row].append(col)
+        rows = sorted(row_columns)
         tables: list[dict[str, Any]] = []
         occupied_headers: set[tuple[int, int, int]] = set()
+        occupied_ranges: list[tuple[int, int, int, int]] = []
         for row_index in rows:
-            populated_cols = sorted(col for (row, col), value in cells.items() if row == row_index and value)
+            populated_cols = sorted(row_columns[row_index])
             for band in self._contiguous_number_bands(populated_cols, max_gap=1):
-                header = [cells.get((row_index, col), "") for col in range(band[0], band[-1] + 1)]
-                if not self._is_catalogue_table_header(header):
+                start_col, end_col = band[0], band[-1]
+                if any(
+                    row_index <= range_end_row and start_col <= range_end_col and end_col >= range_start_col
+                    for range_start_col, range_end_col, range_end_row, _ in occupied_ranges
+                ):
                     continue
-                header_key = (row_index, band[0], band[-1])
+                header = self._xlsx_header_candidate(cells, row_index, start_col, end_col)
+                if not header:
+                    continue
+                header_key = (row_index, start_col, end_col)
                 if header_key in occupied_headers:
                     continue
-                data_rows, end_row = self._xlsx_table_rows(cells, row_index, band[0], band[-1])
+                data_rows, end_row = self._xlsx_table_rows(cells, row_index, start_col, end_col)
                 if not data_rows:
                     continue
                 tables.append(
                     {
                         "start_row": row_index,
-                        "start_col": band[0],
+                        "start_col": start_col,
                         "end_row": end_row,
                         "header": header,
                         "rows": data_rows,
                     }
                 )
-                for col in range(band[0], band[-1] + 1):
-                    occupied_headers.add((row_index, band[0], band[-1]))
+                occupied_headers.add((row_index, start_col, end_col))
+                occupied_ranges.append((start_col, end_col, end_row, row_index))
         tables.sort(key=lambda table: (table["start_row"], table["start_col"]))
         return tables
+
+    def _xlsx_header_candidate(
+        self,
+        cells: dict[tuple[int, int], str],
+        row_index: int,
+        start_col: int,
+        end_col: int,
+    ) -> list[str] | None:
+        current = [cells.get((row_index, col), "") for col in range(start_col, end_col + 1)]
+        previous = [cells.get((row_index - 1, col), "") for col in range(start_col, end_col + 1)]
+        if any(clean_optional_text(value) for value in previous):
+            combined = self._combine_header_rows(previous, current)
+            if self._is_catalogue_table_header(combined) and (
+                not self._is_catalogue_table_header(current)
+                or self._header_field_count(combined) > self._header_field_count(current)
+            ):
+                return combined
+        if self._is_catalogue_table_header(current):
+            return current
+        next_row = [cells.get((row_index + 1, col), "") for col in range(start_col, end_col + 1)]
+        if any(clean_optional_text(value) for value in next_row):
+            combined = self._combine_header_rows(current, next_row)
+            if self._is_catalogue_table_header(combined):
+                return combined
+        return None
+
+    def _header_field_count(self, values: list[str]) -> int:
+        return len(_header_map([value for value in values if clean_optional_text(value)]))
+
+    def _combine_header_rows(self, upper: list[str], lower: list[str]) -> list[str]:
+        width = max(len(upper), len(lower))
+        combined: list[str] = []
+        for index in range(width):
+            top = clean_optional_text(upper[index] if index < len(upper) else "")
+            bottom = clean_optional_text(lower[index] if index < len(lower) else "")
+            if top and bottom and top.lower() not in bottom.lower():
+                combined.append(f"{top} {bottom}")
+            else:
+                combined.append(bottom or top or "")
+        return combined
 
     def _xlsx_table_rows(
         self,
@@ -2210,30 +2338,54 @@ class EmailIngestionService:
         rows: list[list[str]] = []
         empty_streak = 0
         cursor = header_row + 1
+        max_empty_streak = 25
         while cursor <= max_row:
             values = [cells.get((cursor, col), "") for col in range(start_col, end_col + 1)]
             non_empty = sum(1 for value in values if clean_optional_text(value))
-            if rows and self._is_catalogue_table_header(values):
+            if rows and self._xlsx_row_looks_like_header(values):
                 break
             if non_empty == 0:
                 empty_streak += 1
-                if rows and empty_streak >= 2:
+                if rows and empty_streak >= max_empty_streak:
                     break
             else:
                 empty_streak = 0
-                rows.append(values)
+                if self._xlsx_row_is_catalogue_data(values):
+                    rows.append(values)
             cursor += 1
         return rows, cursor - 1
+
+    def _xlsx_row_is_catalogue_data(self, values: list[str]) -> bool:
+        cleaned = [clean_optional_text(value) or "" for value in values]
+        non_empty = [value for value in cleaned if value]
+        if not non_empty:
+            return False
+        if self._xlsx_row_looks_like_header(cleaned):
+            return False
+        joined = " ".join(non_empty)
+        if len(non_empty) == 1 and re.search(
+            r"(?i)\b(?:contact|email|phone|tel|website|address|notes?|terms?|bank|gst|vat|validity|disclaimer)\b",
+            joined,
+        ):
+            return False
+        return True
+
+    def _xlsx_row_looks_like_header(self, values: list[str]) -> bool:
+        if not self._is_catalogue_table_header(values):
+            return False
+        numeric_cells = sum(
+            1
+            for value in values
+            if clean_optional_text(value) and re.search(r"\d[\d,]*(?:\.\d+)?", str(value))
+        )
+        return numeric_cells == 0
 
     def _is_catalogue_table_header(self, values: list[str]) -> bool:
         cleaned = [value for value in values if clean_optional_text(value)]
         if len(cleaned) < 2:
             return False
         mapped = _header_map(cleaned)
-        return "name" in mapped and any(
-            key in mapped
-            for key in ("price", "qty", "unit", "specification", "currency", "moq", "lead_time", "pack")
-        )
+        return _catalogue_header_has_required_shape(cleaned, mapped)
 
     def _format_xlsx_table(
         self,

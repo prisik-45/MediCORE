@@ -1,8 +1,11 @@
+import sys
 import unittest
 import tempfile
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.app.services.catalog_table_parser import (
     parse_catalog_table_text,
@@ -225,6 +228,213 @@ Paracetamol 500mg,10000 kg
         self.assertIn("source_table=2", by_name["Paracetamol 500mg"].notes or "")
         self.assertIn("source_sheet=Specials", by_name["Vitamin C"].notes or "")
 
+    def test_xlsx_extraction_inspects_all_sheets_noise_and_shuffled_columns(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workbook_path = Path(tmp_dir) / "supplier_catalogue.xlsx"
+            self._write_xlsx_workbook(
+                workbook_path,
+                {
+                    "Sheet 1": {
+                        "A1": "ABC Chemicals Pvt Ltd",
+                        "A2": "Updated Price List - July 2026",
+                        "A3": "Contact: sales@example.com",
+                        "A5": "Product Name",
+                        "B5": "Specification",
+                        "C5": "Price / Unit",
+                        "D5": "MOQ",
+                        "E5": "Stock",
+                        "A6": "Citric Acid",
+                        "B6": "USP Grade",
+                        "C6": "USD 2.50/KG",
+                        "D6": "100 KG",
+                        "E6": "500 KG",
+                    },
+                    "Sheet 2": {
+                        "B3": "MOQ",
+                        "C3": "Material",
+                        "D3": "Available Qty",
+                        "E3": "Rate",
+                        "F3": "Grade",
+                        "B4": "25 KG",
+                        "C4": "Sodium Benzoate",
+                        "D4": "1000 KG",
+                        "E4": "$3.20/kg",
+                        "F4": "Food Grade",
+                    },
+                    "Sheet 3": {
+                        "A1": "Notes: prices subject to confirmation",
+                        "A4": "Ingredient",
+                        "B4": "Lead Time",
+                        "C4": "Price(USD)",
+                        "D4": "Quantity(KG)",
+                        "A5": "Ascorbic Acid",
+                        "B5": "14 days",
+                        "C5": "5",
+                        "D5": "250",
+                    },
+                    "Sheet 4": {
+                        "A2": "Product",
+                        "B2": "Stock",
+                        "C2": "Unit",
+                        "D2": "MOQ / Packing",
+                        "A3": "Magnesium Citrate",
+                        "B3": "750",
+                        "C3": "kg",
+                        "D3": "25 kg drum",
+                    },
+                    "Sheet 5": {
+                        "C6": "Material Name",
+                        "D6": "Grade",
+                        "E6": "FOB($/kg)",
+                        "F6": "Delivery Time",
+                        "C7": "Zinc Gluconate",
+                        "D7": "USP",
+                        "E7": "8.75",
+                        "F7": "21 days",
+                    },
+                },
+            )
+
+            service = object.__new__(EmailIngestionService)
+            text = service._extract_xlsx_tables_text(workbook_path)
+
+        self.assertEqual(text.count("[XLSX TABLE]"), 5)
+        items = parse_catalog_table_text(text, dedupe=False)
+        by_name = {item.ingredient_name: item for item in items}
+        self.assertEqual(set(by_name), {
+            "Citric Acid",
+            "Sodium Benzoate",
+            "Ascorbic Acid",
+            "Magnesium Citrate",
+            "Zinc Gluconate",
+        })
+        self.assertEqual(by_name["Citric Acid"].price_per_unit, 2.5)
+        self.assertEqual(by_name["Citric Acid"].available_qty, 500.0)
+        self.assertEqual(by_name["Sodium Benzoate"].moq, 25.0)
+        self.assertEqual(by_name["Ascorbic Acid"].lead_time_days, 14)
+        self.assertEqual(by_name["Magnesium Citrate"].moq, 25.0)
+        self.assertEqual(by_name["Zinc Gluconate"].specification, "USP")
+
+    def test_xlsx_extraction_combines_multi_row_headers_without_llm(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workbook_path = Path(tmp_dir) / "multi-row-header.xlsx"
+            self._write_xlsx_workbook(
+                workbook_path,
+                {
+                    "Split Headers": {
+                        "A1": "Supplier intro text",
+                        "A3": "Product Name",
+                        "B3": "Specification",
+                        "C2": "Price / Unit",
+                        "D2": "Quantity",
+                        "E2": "MOQ",
+                        "F2": "Lead Time",
+                        "C3": "USD/KG",
+                        "D3": "KG",
+                        "E3": "KG",
+                        "F3": "Days",
+                        "A4": "3,3'-Diindolylmethane",
+                        "B4": "Assay: >=99.0%",
+                        "C4": "30",
+                        "D4": "120",
+                        "E4": "25",
+                        "F4": "14",
+                    }
+                },
+            )
+
+            service = object.__new__(EmailIngestionService)
+            text = service._extract_xlsx_tables_text(workbook_path)
+
+        self.assertEqual(text.count("[XLSX TABLE]"), 1)
+        items = parse_catalog_table_text(text, dedupe=False)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].ingredient_name, "3,3'-Diindolylmethane")
+        self.assertEqual(items[0].specification, "Assay: >=99.0%")
+        self.assertEqual(items[0].price_per_unit, 30.0)
+        self.assertEqual(items[0].currency, "USD")
+        self.assertEqual(items[0].available_qty, 120.0)
+        self.assertEqual(items[0].moq, 25.0)
+        self.assertEqual(items[0].lead_time_days, 14)
+
+    def test_xlsx_extraction_preserves_large_seven_sheet_catalogue(self):
+        rows_per_sheet = 500
+        sheet_count = 7
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workbook_path = Path(tmp_dir) / "large-seven-sheet-catalogue.xlsx"
+            sheets: dict[str, dict[str, str]] = {}
+            for sheet_index in range(1, sheet_count + 1):
+                cells = {
+                    "A1": f"Supplier Sheet {sheet_index}",
+                    "A3": "Product Name",
+                    "B3": "Specification",
+                    "C3": "Price(USD)",
+                    "D3": "Quantity(KG)",
+                    "E3": "MOQ(KG)",
+                    "F3": "Lead Time Days",
+                }
+                excel_row = 4
+                for item_index in range(1, rows_per_sheet + 1):
+                    if item_index in {125, 250, 375}:
+                        excel_row += 3
+                    cells[f"A{excel_row}"] = f"Citric Acid Sheet {sheet_index} Item {item_index}"
+                    cells[f"B{excel_row}"] = "USP Grade"
+                    cells[f"C{excel_row}"] = f"{2 + (item_index / 100):.2f}"
+                    cells[f"D{excel_row}"] = str(1000 + item_index)
+                    cells[f"E{excel_row}"] = "25"
+                    cells[f"F{excel_row}"] = "14"
+                    excel_row += 1
+                sheets[f"Sheet {sheet_index}"] = cells
+            self._write_xlsx_workbook(workbook_path, sheets)
+
+            service = object.__new__(EmailIngestionService)
+            text = service._extract_xlsx_tables_text(workbook_path)
+
+        self.assertEqual(text.count("[XLSX TABLE]"), sheet_count)
+        items = parse_catalog_table_text(text, dedupe=False)
+        self.assertEqual(len(items), rows_per_sheet * sheet_count)
+        self.assertEqual(items[0].ingredient_name, "Citric Acid Sheet 1 Item 1")
+        self.assertEqual(items[-1].ingredient_name, "Citric Acid Sheet 7 Item 500")
+        self.assertEqual(items[-1].available_qty, 1500.0)
+
+    def test_xlsx_extraction_preserves_product_only_inventory_across_ten_sheets(self):
+        rows_per_sheet = 600
+        sheet_count = 10
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workbook_path = Path(tmp_dir) / "product-only-inventory.xlsx"
+            sheets: dict[str, dict[str, str]] = {}
+            for sheet_index in range(1, sheet_count + 1):
+                cells = {
+                    "A1": "Total-Ingredients Inventory",
+                    "A2": f"Botanical Category {sheet_index}",
+                    "A4": "#",
+                    "B4": "Product Name",
+                }
+                excel_row = 5
+                for item_index in range(1, rows_per_sheet + 1):
+                    if sheet_index == 1 and item_index == 301:
+                        cells[f"A{excel_row}"] = "Notes: second inventory region follows"
+                        excel_row += 4
+                        cells[f"A{excel_row}"] = "#"
+                        cells[f"B{excel_row}"] = "Product Name"
+                        excel_row += 1
+                    cells[f"A{excel_row}"] = str(item_index)
+                    cells[f"B{excel_row}"] = f"Arjuna Leaf S{sheet_index} {item_index} Organic"
+                    excel_row += 1
+                sheets[f"Sheet {sheet_index}"] = cells
+            self._write_xlsx_workbook(workbook_path, sheets)
+
+            service = object.__new__(EmailIngestionService)
+            text = service._extract_xlsx_tables_text(workbook_path)
+
+        self.assertEqual(text.count("[XLSX TABLE]"), sheet_count + 1)
+        items = parse_catalog_table_text(text, dedupe=False)
+        self.assertEqual(len(items), rows_per_sheet * sheet_count)
+        self.assertEqual(items[0].ingredient_name, "Arjuna Leaf S1 1 Organic")
+        self.assertEqual(items[300].ingredient_name, "Arjuna Leaf S1 301 Organic")
+        self.assertEqual(items[-1].ingredient_name, "Arjuna Leaf S10 600 Organic")
+        self.assertTrue(all(item.specification is None for item in items))
+
     def test_docx_anydoc_table_keeps_multiclause_specification_in_same_row(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             docx_path = Path(tmp_dir) / "catalogue.docx"
@@ -424,6 +634,8 @@ Paracetamol 500mg,10000 kg
             for index, cells in enumerate(sheets.values(), start=1):
                 rows: dict[int, list[tuple[str, str]]] = {}
                 for ref, value in cells.items():
+                    if ref == "__merges__":
+                        continue
                     row_index = int("".join(char for char in ref if char.isdigit()))
                     rows.setdefault(row_index, []).append((ref, value))
                 sheet_data = "".join(
@@ -435,10 +647,19 @@ Paracetamol 500mg,10000 kg
                     + "</row>"
                     for row_index, row_cells in sorted(rows.items())
                 )
+                merge_refs = cells.get("__merges__", [])
+                merge_xml = ""
+                if merge_refs:
+                    merge_xml = (
+                        f'<mergeCells count="{len(merge_refs)}">'
+                        + "".join(f'<mergeCell ref="{xml_escape(ref)}"/>' for ref in merge_refs)
+                        + "</mergeCells>"
+                    )
                 worksheet = (
                     '<?xml version="1.0" encoding="UTF-8"?>'
                     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                     f"<sheetData>{sheet_data}</sheetData>"
+                    f"{merge_xml}"
                     "</worksheet>"
                 )
                 xlsx.writestr(f"xl/worksheets/sheet{index}.xml", worksheet)
