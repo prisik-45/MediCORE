@@ -28,9 +28,12 @@ services:
     image: medicore-api:${MEDICORE_IMAGE_TAG:-prod}
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
-      ENVIRONMENT: production
+      ENVIRONMENT: development
+      APP_NAME: MediCORE
+      API_BASE_URL: http://localhost:8000
+      FRONTEND_ORIGIN: http://localhost:3000
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
       REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
     ports:
@@ -56,9 +59,12 @@ services:
     image: medicore-worker:${MEDICORE_IMAGE_TAG:-prod}
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
-      ENVIRONMENT: production
+      ENVIRONMENT: development
+      APP_NAME: MediCORE
+      API_BASE_URL: http://localhost:8000
+      FRONTEND_ORIGIN: http://localhost:3000
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
       REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
     command:
@@ -87,12 +93,12 @@ services:
     image: medicore-frontend:${MEDICORE_IMAGE_TAG:-prod}
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL}
-      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8000}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://127.0.0.1:8000/ws/chat}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-https://chuyunhjngwicnqwecuy.supabase.co}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
@@ -106,7 +112,7 @@ services:
       - backup
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
       BACKUP_INTERVAL_SECONDS: ${DB_BACKUP_INTERVAL_SECONDS:-86400}
       PGPASSWORD: ${SUPABASE_DB_PASSWORD}
@@ -138,7 +144,7 @@ services:
       - backup
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
       BACKUP_INTERVAL_SECONDS: ${CERTIFICATE_BACKUP_INTERVAL_SECONDS:-86400}
       RCLONE_CONFIG_SUPABASE_TYPE: s3
@@ -170,7 +176,7 @@ services:
     environment:
       BACKUP_INTERVAL_SECONDS: ${ENV_BACKUP_INTERVAL_SECONDS:-86400}
     volumes:
-      - ./.env.production:/source/.env.production:ro
+      - ./.env:/source/.env:ro
       - ./backups/environment:/backups/environment
     command:
       - sh
@@ -179,9 +185,9 @@ services:
         set -eu
         while true; do
           ts=$$(date -u +%Y%m%dT%H%M%SZ)
-          cp /source/.env.production "/backups/environment/env-production-$$ts"
-          chmod 600 "/backups/environment/env-production-$$ts"
-          find /backups/environment -type f -name 'env-production-*' -mtime +${ENV_BACKUP_RETENTION_DAYS:-30} -delete
+          cp /source/.env "/backups/environment/env-development-$$ts"
+          chmod 600 "/backups/environment/env-development-$$ts"
+          find /backups/environment -type f -name 'env-development-*' -mtime +${ENV_BACKUP_RETENTION_DAYS:-30} -delete
           sleep "$$BACKUP_INTERVAL_SECONDS"
         done
 
