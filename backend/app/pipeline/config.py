@@ -3,13 +3,16 @@
 from dataclasses import dataclass, field
 from typing import Dict, Literal
 
+from backend.app.config import get_settings
+
 
 @dataclass
 class PipelineConfig:
-    # Target DPI for PDF page rendering (Phase 3 requirement: 300-400 DPI)
-    target_dpi: int = 300
+    # Target DPI for PDF page rendering. Keep conservative for memory-limited workers.
+    target_dpi: int = 200
     min_image_dpi_upscale: int = 200
     max_image_dpi_downsample: int = 400
+    max_image_dimension: int = 3000
 
     # Image tiling threshold (Phase 3 requirement: split >3000px)
     tile_max_dimension: int = 3000
@@ -23,6 +26,7 @@ class PipelineConfig:
     # Preprocessing options
     enable_deskew: bool = True
     enable_adaptive_binarization: bool = True
+    enable_img2table: bool = True
     denoise_kernel_size: int = 3
 
     # Confidence fallback threshold (Phase 3 requirement)
@@ -40,6 +44,18 @@ class PipelineConfig:
         }
     )
 
+    @classmethod
+    def from_settings(cls) -> "PipelineConfig":
+        settings = get_settings()
+        target_dpi = max(120, min(int(settings.pipeline_pdf_render_dpi), 300))
+        max_image_dim = max(1800, min(int(settings.pipeline_max_image_dim), 4500))
+        return cls(
+            target_dpi=target_dpi,
+            max_image_dimension=max_image_dim,
+            tile_max_dimension=max_image_dim,
+            enable_img2table=bool(settings.pipeline_enable_img2table),
+        )
+
 
 # Singleton default config instance
-default_config = PipelineConfig()
+default_config = PipelineConfig.from_settings()

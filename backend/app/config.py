@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     openrouter_site_url: str = ""
     openrouter_app_name: str = "MediCORE"
 
+    pipeline_pdf_render_dpi: int = 200
+    pipeline_max_image_dim: int = 3000
+    pipeline_enable_img2table: bool = True
+
     email_mode: str = "imap"
     imap_host: str = "imap.gmail.com"
     imap_port: int = 993
