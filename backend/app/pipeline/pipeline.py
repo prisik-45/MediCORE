@@ -95,7 +95,11 @@ def _process_pdf_document(path: Path) -> ExtractionResult:
                 if default_config.enable_img2table:
                     table_blocks = extract_tables_from_pdf_page(fitz_page)
             elif classification.page_type == "scanned":
-                page_img = pdf_wrapper.render_page_image(page_num, target_dpi=default_config.target_dpi)
+                page_img = pdf_wrapper.render_page_image(
+                    page_num,
+                    target_dpi=default_config.target_dpi,
+                    max_dimension=default_config.max_image_dimension,
+                )
                 _log_memory(f"pdf page {page_num} rendered dpi={default_config.target_dpi} size={page_img.size}")
                 norm_img = normalize_image_resolution(page_img, max_dim=default_config.max_image_dimension)
                 _log_memory(f"pdf page {page_num} normalized size={norm_img.size}")
@@ -107,7 +111,11 @@ def _process_pdf_document(path: Path) -> ExtractionResult:
                     _log_memory(f"pdf page {page_num} img2table blocks={len(table_blocks)}")
             else:  # mixed page
                 native_blocks = extract_native_text(fitz_page)
-                page_img = pdf_wrapper.render_page_image(page_num, target_dpi=default_config.target_dpi)
+                page_img = pdf_wrapper.render_page_image(
+                    page_num,
+                    target_dpi=default_config.target_dpi,
+                    max_dimension=default_config.max_image_dimension,
+                )
                 _log_memory(f"pdf page {page_num} rendered dpi={default_config.target_dpi} size={page_img.size}")
                 norm_img = normalize_image_resolution(page_img, max_dim=default_config.max_image_dimension)
                 _log_memory(f"pdf page {page_num} normalized size={norm_img.size}")
