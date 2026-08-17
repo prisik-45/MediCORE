@@ -69,8 +69,15 @@ class Settings(BaseSettings):
 
     @property
     def queue_url(self) -> str:
-        configured_url = self.valkey_url or self.redis_url
+        configured_url = (self.valkey_url or self.redis_url).strip()
+        while configured_url.endswith("/"):
+            configured_url = configured_url[:-1]
+
         parsed_url = urlparse(configured_url)
+        if not parsed_url.path:
+            configured_url += "/0"
+            parsed_url = urlparse(configured_url)
+
         if (
             self.environment.lower() != "production"
             and parsed_url.hostname == "valkey"

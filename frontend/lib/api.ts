@@ -1,4 +1,4 @@
-const PRODUCTION_API_URL = "https://medicore-production-0aac.up.railway.app";
+const PRODUCTION_API_URL = "https://medicore-production-71d3.up.railway.app";
 const CHAT_WS_PATH = "/ws/chat";
 
 function isLocalHostname(hostname: string) {

@@ -2535,7 +2535,7 @@ class EmailIngestionService:
         supabase.storage.from_(self.settings.supabase_storage_bucket).upload(
             object_path,
             file_path.read_bytes(),
-            {"content-type": mime_type, "upsert": "true"},
+            {"content-type": mime_type, "x-upsert": "true"},
         )
         return supabase.storage.from_(self.settings.supabase_storage_bucket).get_public_url(object_path), object_path
 

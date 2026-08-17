@@ -557,7 +557,7 @@ async def upload_certificate(
         supabase.storage.from_(bucket).upload(
             object_path,
             contents,
-            {"content-type": file.content_type or "application/pdf", "upsert": "true"},
+            {"content-type": file.content_type or "application/pdf", "x-upsert": "true"},
         )
         public_url = supabase.storage.from_(bucket).get_public_url(object_path)
     except Exception as err:
