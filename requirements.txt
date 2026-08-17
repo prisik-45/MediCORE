@@ -37,7 +37,7 @@ mammoth>=1.8.0
 # Owned by pipeline/ingestion/loader_image.py & preprocessing: image manipulation
 pillow>=10.0.0
 # Owned by pipeline/extraction/tables.py: image contouring for img2table
-opencv-contrib-python-headless>=4.10.0
+opencv-contrib-python==4.12.0.88
 # Owned by backend/app/services/terminal_sync_status.py: terminal status reporting
 rich>=13.0.0
 # Owned by backend/app/schemas.py: data validation models
@@ -50,3 +50,4 @@ python-dotenv>=1.2.2
 rapidocr-onnxruntime>=1.4.4
 # Owned by pipeline/extraction/tables.py: rule-based CPU table extraction
 img2table>=2.0.0
+
